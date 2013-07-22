@@ -70,7 +70,7 @@
         const UNKNOWN_COMMAND    = 51;
         const UNKNOWN_PARAMETER  = 52;
 
-		public $streams = array();
+        public $streams = array();
         public $continue = true;
 
 
@@ -207,40 +207,44 @@
                 $active = array_filter($this->streams, function($e){return $e->socket != NULL;});
 
                 $read   = array_map(function($e){return $e->socket;}, $active);
-                $write  = array_map(function($e){return $e->socket;}, $active);
+                
+                # TODO: Add only the sockets that have data to be sent
+                $_with_data = array_filter($active, function($e){return (count($e->outgoing_buffer) > 0);});
+                $write  = array_map(function($e){return $e->socket;}, $_with_data);
+
                 $except = NULL;
 
                 socket_select($read, $write, $except, NULL);
                 
                 // Handle incomming connection
                 if(in_array($main_socket, $read)) {
-					$client_socket = socket_accept($main_socket);
-					$this->handle_client($client_socket);
-				}
-				
+                    $client_socket = socket_accept($main_socket);
+                    $this->handle_client($client_socket);
+                }
+                
                 // Incomming data
-				foreach($read as $remote_socket) {
-					
-					if($remote_socket == $main_socket)
-						continue;
+                foreach($read as $remote_socket) {
+                    
+                    if($remote_socket == $main_socket)
+                        continue;
 
                     if(!isset($this->streams[(int)$remote_socket]))
                         continue;
 
                     if(count($this->streams[(int)$remote_socket]->incomming_buffer) > 15)
                         continue;
-					
+                    
                     $count = socket_recv($remote_socket, $data, 8192, 0);
 
                     // if the remote connection has been closed
-					if($count != False) {
+                    if($count != False) {
 
                         array_push($this->streams[(int)$remote_socket]->incomming_buffer, $data);
                     } else {
                         socket_close($remote_socket);
                         $this->streams[(int)$remote_socket]->socket = NULL;
                     }
-				}
+                }
 
                 // Outgoing data
                 foreach($write as $remote_socket) {
@@ -254,11 +258,11 @@
                     if($this->streams[(int)$remote_socket]->socket == NULL)
                         continue;
 
-                    if(isset($this->streams[(int)$remote_socket]->outgoing_buffer[0])) {
-                        $data = array_shift($this->streams[(int)$remote_socket]->outgoing_buffer);
+                    // if(isset($this->streams[(int)$remote_socket]->outgoing_buffer[0])) {
+                    $data = array_shift($this->streams[(int)$remote_socket]->outgoing_buffer);
 
-                        socket_write($remote_socket, $data);
-                    }
+                    socket_write($remote_socket, $data);
+                    // }
                 }
             }
 

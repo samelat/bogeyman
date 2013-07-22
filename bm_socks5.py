@@ -28,9 +28,9 @@ import argparse
 
 from struct import unpack, pack
 
+from threading import Lock
 from threading import Thread
 from threading import Semaphore
-from threading import Lock
 
 '''
 * Comandos Request
@@ -61,6 +61,10 @@ class HTTPSocks5Adapter:
     SUCCESS            = 0
     CONNECTION_REFUSED = 1
     CONNECTION_CLOSED  = 2
+    UNKNOWN_HOST_NAME  = 3
+
+    # Adapter errors
+    HTTP_REQUEST_FAIL  = 20
 
     # Protocol errors
     MALFORMED_REQUEST  = 50
@@ -97,8 +101,12 @@ class HTTPSocks5Adapter:
         request = urllib2.Request(self.http_host, 'data=|02|{0}:{1}'.format(host, port))
 
         self.requests_sem.acquire()
-        response = urllib2.urlopen(request)
-        self.requests_sem.release()
+        try:
+            response = urllib2.urlopen(request)
+        except urllib2.HTTPError as e:
+            return self.HTTP_REQUEST_FAIL
+        finally:
+            self.requests_sem.release()
 
         data = response.read()
 
@@ -125,8 +133,13 @@ class HTTPSocks5Adapter:
         request = urllib2.Request(self.http_host, request)
 
         self.requests_sem.acquire()
-        response = urllib2.urlopen(request)
-        self.requests_sem.release()
+        try:
+            response = urllib2.urlopen(request)
+        except urllib2.HTTPError as e:
+            self.stream_id = None
+            return False
+        finally:
+            self.requests_sem.release()
 
         data = response.read()
 
@@ -212,11 +225,12 @@ class Socks5Stream(Thread):
     ADDR_DNAME  = 3
 
 
-    def __init__(self, sock, requests_sem, bar, server_uri):
+    def __init__(self, sock, requests_sem, status_bar, server_uri):
         Thread.__init__(self)
         self.socket = sock;
         self.remote_host = HTTPSocks5Adapter(server_uri, requests_sem)
-        self.bar = bar
+        self.server_uri = server_uri
+        self.status_bar = status_bar
 
         self._continue = True
 
@@ -263,11 +277,22 @@ class Socks5Stream(Thread):
 
         if command == self.CMD_CONNECT:
 
-            # print "[+] Connecting to {0}:{1}".format(hostname, port)
+            self.status_bar.info("Connecting to {0}:{1}".format(hostname, port))
 
             error = self.remote_host.connect(hostname, port)
-            if error != HTTPSocks5Adapter.SUCCESS:
-                # print '[e] Connection error ({0})'.format(error)
+            if error == HTTPSocks5Adapter.CONNECTION_REFUSED:
+                self.status_bar.error('Connection to {0}:{1} refused'.format(hostname, port))
+                return False
+
+            elif error == HTTPSocks5Adapter.UNKNOWN_HOST_NAME:
+                self.status_bar.error('Unknown hostname {0}'.format(hostname))
+                return False
+
+            if error == HTTPSocks5Adapter.HTTP_REQUEST_FAIL:
+                self.status_bar.error('Request error - {0}'.format(self.server_uri))
+                return False
+
+            elif error != HTTPSocks5Adapter.SUCCESS:
                 return False
 
             response = pack('BBBB', version, 0, 0, addr_type)
@@ -312,12 +337,12 @@ class Socks5Stream(Thread):
                 if not self.remote_host.send(data):
                     break
 
-                self.bar.increase_tx(len(data))
+                self.status_bar.increase_tx(len(data))
 
             if self.socket in to_write:
                 self.socket.sendall(_incomming_data)
 
-                self.bar.increase_rx(len(_incomming_data))
+                self.status_bar.increase_rx(len(_incomming_data))
                 _incomming_data = ''
 
         # Flush the reminding data and close the connection
@@ -331,22 +356,18 @@ class Socks5Stream(Thread):
 
     def run(self):
         
-        if not self._handshake():
-            return
-        self._main_loop()
-
-        '''
-        print "[+] Closing connection {0}:{1}".format(self.remote_host.hostname,
-                                                      self.remote_host.hostport)
-        '''
+        if self._handshake():
+            self._main_loop()
 
         self.socket.close()
 
 
 class StatusBar(Thread):
 
-    def __init__(self):
+    def __init__(self, verbosity):
         Thread.__init__(self)
+
+        self.verbosity = verbosity
 
         self._continue = True
         self._mutex = Lock()
@@ -358,16 +379,70 @@ class StatusBar(Thread):
         self._bar_format = "[{bar}] [Tx: ({tx}) - Rx: ({rx})]"
         self._bar_params = {'tx':0, 'rx':0, 'bar':'-'}
 
+
+    def _write(self, msg):
+        sys.stdout.write('\r'*self._prev_output_size)
+        sys.stdout.write(msg)
+        if len(msg) < self._prev_output_size:
+            sys.stdout.write(' '*(self._prev_output_size - len(msg)))
+        sys.stdout.flush()
+
+
+    def _update_bar(self):
+        _out_str = self._bar_format.format(**self._bar_params)
+        self._write(_out_str)
+        self._prev_output_size = len(_out_str)
+
+
+    def done(self):
+        if self.verbosity > 0:
+            sys.stdout.write('done\n')
+
+
+    def fail(self):
+        if self.verbosity > 0:
+            sys.stdout.write('fail\n')
+
+
+    def checking(self, msg):
+        if self.verbosity > 0:
+            self._write('[+] ' + msg + ' ... ')
+            
+
+    def info(self, msg):
+        self._mutex.acquire()
+
+        if self.verbosity > 1:
+            self._write('[!] ' + msg + '\n')
+            self._update_bar()
+
+        self._mutex.release()
+
+
     def error(self, msg):
-        print ""
+        self._mutex.acquire()
+
+        if self.verbosity > 0:
+            self._write('[e] ' + msg + '\n')
+            self._update_bar()
+
+        self._mutex.release()
 
 
     def increase_tx(self, amount):
+        self._mutex.acquire()
+
         self._bar_params['tx'] += amount
+
+        self._mutex.release()
 
 
     def increase_rx(self, amount):
+        self._mutex.acquire()
+
         self._bar_params['rx'] += amount
+
+        self._mutex.release()
 
 
     def stop(self):
@@ -377,23 +452,22 @@ class StatusBar(Thread):
     def run(self):
 
         while self._continue:
-            _out_str = self._bar_format.format(**self._bar_params)
+            self._mutex.acquire()
 
-            sys.stdout.write("\r"*self._prev_output_size)
-            sys.stdout.write(_out_str)
-            sys.stdout.flush()
+            self._update_bar()
 
-            self._prev_output_size = len(_out_str)
+            self._mutex.release()
 
             time.sleep(1)
 
             self._bar_index = (self._bar_index + 1) % 4
             self._bar_params['bar'] = self._bars[self._bar_index]
+        print ''
 
 
 class Server:
 
-    def __init__(self, local_ip, local_port, server_uri):
+    def __init__(self, local_ip, local_port, server_uri, status_bar):
         self.local_ip = local_ip
         self.local_port = local_port
         self.server_uri = server_uri
@@ -401,51 +475,61 @@ class Server:
         self.streams = []
 
         self.requests_sem = Semaphore(2)
-        self.bar = StatusBar()
+        self.status_bar = status_bar
 
     def start(self):
 
         self.main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        self.status_bar.checking('Binding {0}:{1}'.format(args.local_ip, args.local_port))
         try:
             self.main_socket.bind((self.local_ip, self.local_port))
         except:
-            print 'error'
+            self.status_bar.fail()
             sys.exit(1)
 
-        print 'done'
+        self.status_bar.done()
 
         self.main_socket.listen(4)
 
-        self.bar.start()
+        self.status_bar.start()
 
         try:
             while True:
 
                 connection, addr = self.main_socket.accept()
 
-                stream = Socks5Stream(connection, self.requests_sem, self.bar, self.server_uri)
+                stream = Socks5Stream(connection, self.requests_sem, self.status_bar, self.server_uri)
                 stream.start()
 
                 self.streams.append(stream)
+        except Exception as e:
+            self.status_bar.error(str(e))
+            pass
         except:
-            print ''
+            self.status_bar.info('Closing all connections')
             pass
 
-        self.bar.stop()
+        try:
+            self.status_bar.stop()
 
-        for stream in self.streams:
-            stream.stop()
-            stream.join()
+            for stream in self.streams:
+                stream.stop()
 
-        self.main_socket.close()
+            for stream in self.streams:
+                stream.join()
+
+            self.main_socket.close()
+        except:
+            print 'Ok ...'
+            pass
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-u', '--server_uri', default='http://127.0.0.1/server.php',
+    parser.add_argument('-u', '--server_uri', default='http://127.0.0.1/bogeyman.php',
                         help='Remote HTTP server where you do the requests.')
 
     parser.add_argument('-i', '--local_ip', default='127.0.0.1',
@@ -454,11 +538,16 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--local_port', type=int, default=1080,
                         help='Specifies the local port to listen on.')
 
+    parser.add_argument('-v', '--verbosity', action="count", default=0, 
+                        help='Increase output verbosity.')
+
     args = parser.parse_args()
 
-    sys.stdout.write('[!] Checking service {0} ... \n'.format(args.server_uri)) # TODO
-    sys.stdout.write('[!] Binding {0}:{1} ... '.format(args.local_ip, args.local_port))
+    status_bar = StatusBar(args.verbosity)
 
-    server = Server(args.local_ip, args.local_port, args.server_uri)
+    status_bar.checking('Checking service {0}'.format(args.server_uri)) # TODO
+    status_bar.done()
+
+    server = Server(args.local_ip, args.local_port, args.server_uri, status_bar)
 
     server.start()
