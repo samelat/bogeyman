@@ -75,6 +75,8 @@ class HTTPSocks5Adapter:
     CLIENT_READY       = 90
     SERVER_BUSY        = 91
 
+    END_SERVICE        = 99
+
     def __init__(self, http_host, requests_sem):
         self.http_host = http_host
         self.requests_sem = requests_sem
@@ -88,6 +90,42 @@ class HTTPSocks5Adapter:
 
         self.hostname = None
         self.hostport = None
+
+    @staticmethod
+    def check_service(http_host):
+        try:
+            response = urllib2.urlopen(http_host)
+        except urllib2.HTTPError as e:
+            return False
+
+        if response.read() == '|90':
+            return True
+        return False
+
+    @staticmethod
+    def begin_service(http_host):
+        try:
+            response = urllib2.urlopen(http_host + '?server', timeout=4)
+        except socket.timeout:
+            return True
+        except urllib2.HTTPError as e:
+            return False
+
+        return False
+
+    @staticmethod
+    def end_service(http_host):
+
+        request = urllib2.Request(http_host, 'data=|{0}'.format(HTTPSocks5Adapter.END_SERVICE))
+
+        try:
+            response = urllib2.urlopen(request)
+        except urllib2.HTTPError as e:
+            return False
+
+        if response.read() == '|00':
+            return True
+        return False
 
 
     def connect(self, host, port):
@@ -538,16 +576,39 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--local_port', type=int, default=1080,
                         help='Specifies the local port to listen on.')
 
-    parser.add_argument('-v', '--verbosity', action="count", default=0, 
+    parser.add_argument('-b', '--not_begin', action='store_true',
+                        help='Do not start the remote service before start the local.')
+
+    parser.add_argument('-e', '--not_end', action='store_true',
+                        help='Do not stop the remote service after stop the local.')
+
+    parser.add_argument('-v', '--verbosity', action="count", default=0,
                         help='Increase output verbosity.')
 
     args = parser.parse_args()
 
     status_bar = StatusBar(args.verbosity)
 
-    status_bar.checking('Checking service {0}'.format(args.server_uri)) # TODO
+    if not args.not_begin:
+        status_bar.checking('Beginning service {0}'.format(args.server_uri))
+        if not HTTPSocks5Adapter.begin_service(args.server_uri):
+            status_bar.fail()
+            sys.exit(-1)
+        status_bar.done()
+    
+    status_bar.checking('Checking service {0}'.format(args.server_uri))
+    if not HTTPSocks5Adapter.check_service(args.server_uri):
+        status_bar.fail()
+        sys.exit(-2)
     status_bar.done()
 
     server = Server(args.local_ip, args.local_port, args.server_uri, status_bar)
 
     server.start()
+
+    if not args.not_begin:
+        status_bar.checking('Ending service {0}'.format(args.server_uri))
+        if not HTTPSocks5Adapter.end_service(args.server_uri):
+            status_bar.fail()
+            sys.exit(-3)
+        status_bar.done()

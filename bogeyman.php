@@ -267,6 +267,8 @@
             }
 
             socket_close($main_socket);
+
+            unlink('/tmp/port');
         }
     }
 
