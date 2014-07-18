@@ -17,6 +17,9 @@
    Author: Gaston Traberg <samelat@gmail.com>
 '''
 
+# I am importing this module just to fix the SSL problem
+import ssl
+
 import re
 import sys
 import time
@@ -108,6 +111,8 @@ class HTTPSocks5Adapter:
             response = urllib2.urlopen(http_host + '?server', timeout=4)
         except socket.timeout:
             return True
+        except ssl.SSLError:
+			return True
         except urllib2.HTTPError as e:
             return False
 
@@ -419,7 +424,7 @@ class StatusBar(Thread):
 
 
     def _write(self, msg):
-        sys.stdout.write('\r'*self._prev_output_size)
+        sys.stdout.write('\r')
         sys.stdout.write(msg)
         if len(msg) < self._prev_output_size:
             sys.stdout.write(' '*(self._prev_output_size - len(msg)))
