@@ -1,4 +1,4 @@
 
 -- Introduction --
-    The idea here is try to explain the protocol behean Bogeyman, allowing others to implements their
+    The idea here is try to explain the protocol behind Bogeyman, allowing others to implement their
 own solutions.
