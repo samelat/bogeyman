@@ -1,0 +1,4 @@
+
+-- Introduction --
+    The idea here is try to explain the protocol behean Bogeyman, allowing others to implements their
+own solutions.

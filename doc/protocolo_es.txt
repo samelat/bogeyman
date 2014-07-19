@@ -1,0 +1,129 @@
+
+Contacto: samelat[at]gmail.com
+
+-- Introduccion --
+    La idea de este documento es describir lo más detalladamente posible, el funcionamiento
+del protocolo utilizado por Bogeyman para comunicar el elemento que existe de forma local,
+con el recurso PHP que tenemos remoto.
+
+-- Protocolo --
+    El protocolo de Bogeyman esta totalmente basado en caracteres graficos, lo que puede
+no ser eficiente en cuanto a procesamiento y transferencia pero que sí ofrece una extrema
+flexibilidad y facilidad en su implementación y uso, en ambos extremos de la comunicación.
+
+    La comunicación entre el programa local y el recurso remoto, se realiza mediante
+requerimientos HTTP/S a través de los cuales se envían los datos salientes, recibiendo en las
+respuestas, los datos entrantes. Todos estos requerimientos se realizan por medio del método
+POST con un único parámetro llamado “data”. Este único parámetro posee la forma
+
+    |<id_de_comando>|<parametros>
+
+donde <id_de_comando> esta compuesto por un número entero de dos digitos que indican el
+comando al que se hace referencia, mientras que <parametros> son los parámetros que el
+comando requiere. Tanto el ID de comando como los parámetros del mismo, son elementos
+que se encuentran separados entre sí por el carácter ‘|’.
+
+El proceso básicamente consta de los siguientes 4 pasos:
+
+    0.- Para iniciar el recurso PHP que se encargara de mantener activas las conexiones
+        que hagamos a servicios remotos, se debe en primera instancia, realizar el requerimiento
+        
+            "http://mydominio.com/bogeyman.php?server
+
+        el cual deja la instancia en un ciclo infinito que nunca vuelve. Debido a que no vuelve,
+        el requerimiento que hacemos tampoco vuelve, por lo que tenemos que detenerlo por nuestra
+        cuenta, lo que no detiene la instancia que se inició en remotamente.
+        Con esta instancia en marcha, la cual se encargará de mantener los sockets remotos
+        activos, procedemos a interactuar con esta, de la siguiente manera.
+
+    1.- Se envía el comando 02 el cual crea un nuevo stream apuntado al host y puerto indicados
+        en el unico parametro que el comando posee. Por ejemplo, si quisieramos conectarnos al
+        puerto 80 de www.google.com, enviamos en el parámetro “data” lo siguiente:
+
+            “|02|www.google.com:80”
+
+        Como respuesta a este requerimiento se obtendría el ID del stream creado, con la forma:
+
+            “|03”
+
+    2.- Con el ID de nuestro stream, solo resta enviar y recibir datos a través de el. Para
+        esto existe el comando 00, el cual envía datos al realizar el requerimiento y recibe
+        los datos pendientes del otro lado, en la respuesta. Como se indica más abajo, este
+        comando posee solo dos parámetros que son el ID del stream y los datos a enviar
+        codificado en Base64.
+
+        Siguiendo con el ejemplo anterior, si quisiéramos enviar un requerimiento HTTP a nuestra
+        stream con google, tendríamos que realizar un request como el siguiente:
+
+            “|00|03|R0VUIC9pbmRleC5waHAg …”
+
+        donde recibiremos como respuesta algo similar a lo siguiente, en caso de tener éxito
+        el requerimiento
+
+            “|00|PGh0bWw+PGJvZHk …”
+
+        Si ocurriera que el requerimiento fracaso porque el stream se cerró por algún motivo, se
+        nos devolverá un código de respuesta "|02" en lugar del código "00" del ejemplo. Los
+        diferentes códigos que pueden retornar, se listan más adelante.
+
+    3.- En caso de que todo haya ido bien o de que el servicio del otro lado del stream no haya
+        cerrado la conexión antes que nosotros, es probable que nosotros queramos cerrarla en
+        algun momento. Para esto, enviamos lo siguiente
+
+	        “|01|03”
+
+	    donde el código de respuesta indica el resultado que el comando tuvo.
+
+    4.- Por último, para detener la instancia que iniciamos en el paso 0 y que nunca se detuvo, 
+        enviamos el comando "|99" el cual no tiene parámetros y devuelve un código indicando el
+        resultado obtenido.
+
+Existen muchas situaciones diferentes que no son contempladas en la anterior descripción pero que
+no difieren mucho de la misma. Para tener un mejor conocimiento de los posibles valores de enviar
+y recibir, se listan a continuación los diferentes comandos existentes como así también los códigos
+de respuesta que se podria recibir, en un intento de describir mejor los posibles casos.
+
+-------------------------------------------------------------------------------------------------
+00 (Data Refresh):
+    Se encarga de enviar al recurso PHP todos los datos pendientes en el buffer de salida,
+    recibiendo en la respuesta, todos los datos pendientes que la componente PHP tenía para
+    enviar de vuelta.
+
+    El formato de los datos enviados es:
+
+        <stream_id>|<outgoing_data> en el requerimiento
+            .- <stream_id> es el ID del stream, obtenido al crear la conexión.
+            .- <outgoing_data> son los datos a enviar, en base64.
+
+        <response_code>|<incomming_data> en la respuesta
+            .- <response_code> es el código de error de la respuesta.
+            .- <incomming_data> son los datos recibidos, en base64.
+
+-------------------------------------------------------------------------------------------------
+01 (Close Socket):
+    Se encarga de cerrar la conexión especificada a través del único parámetro <id_stream>,
+    recibiendo como única respuesta el código de error <response_code>.
+
+-------------------------------------------------------------------------------------------------
+02 (Create TCP Stream):
+    Se crea una nueva conexión con un dominio y puerto destinos, donde los datos enviados
+    son <hostname>:<port> y como única respuesta se obtiene el <response_code>.
+
+-------------------------------------------------------------------------------------------------
+99 (Halt service):
+    Este comando se encarga de detener la ejecución independiente que existe de la componente
+    PHP, cerrando todas las conexiones pendientes y liberando todos los recursos en el proceso.
+    No tiene parametros.
+
+-------------------------------------------------------------------------------------------------
+Códigos de respuesta
+
+    00    - OK
+    01    - Connection Refused
+    02    - Connection Closed
+
+    50    - Malformed request
+    51    - Unknown command
+    52    - Unknown parameter
+
+
