@@ -1,4 +1,6 @@
 
+Many Thanks to Mauro Soria that is helping me a lot in the development of new components and solving some problems.
+
 How to use it:
 
 1)  Put the script bogeyman.php in the server you want to use as source for the remote connections.
