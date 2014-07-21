@@ -1,3 +1,8 @@
+import sys
+import time
+from threading import Lock
+from threading import Thread
+
 class StatusBar(Thread):
 
     def __init__(self, verbosity):

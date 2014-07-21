@@ -21,6 +21,12 @@
 *    51    - Unknown command
 *    52    - Unknown parameter
 '''
+import socket
+import ssl
+import urllib
+import urllib2
+import time
+
 class HTTPSocks5Adapter:
 
     # Socket layer errors

@@ -1,3 +1,9 @@
+import socket
+import sys
+from threading import Semaphore
+from .Socks5Stream import *
+from .HTTPSocks5Adapter import *
+
 class Server:
 
     def __init__(self, local_ip, local_port, server_uri, status_bar):
@@ -14,7 +20,7 @@ class Server:
 
         self.main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        self.status_bar.checking('Binding {0}:{1}'.format(args.local_ip, args.local_port))
+        self.status_bar.checking('Binding {0}:{1}'.format(self.local_ip, self.local_port))
         try:
             self.main_socket.bind((self.local_ip, self.local_port))
         except:

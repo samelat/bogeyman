@@ -1,3 +1,8 @@
+from threading import Thread
+from struct import unpack, pack
+import select
+from .HTTPSocks5Adapter import *
+
 class Socks5Stream(Thread):
 
     NO_AUTH = 0
