@@ -18,18 +18,12 @@
 '''
 
 # I am importing this module just to fix the SSL problem
-import ssl
+
 
 import re
 import sys
 import time
-import select
-import socket
-import urllib
-import urllib2
 import argparse
-
-from struct import unpack, pack
 from threading import Semaphore
 from lib.core import *
 from lib.output import *

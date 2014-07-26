@@ -21,10 +21,12 @@
 *    51    - Unknown command
 *    52    - Unknown parameter
 '''
+import thirdparty.requests as requests
 import socket
 import ssl
 import urllib
 import urllib2
+import urlparse
 import time
 
 class HTTPSocks5Adapter:
@@ -53,6 +55,20 @@ class HTTPSocks5Adapter:
         self.http_host = http_host
         self.requests_sem = requests_sem
 
+        parsed = urlparse.urlparse(http_host)
+        try:
+            self.vhost = parsed.netloc.split(':')[0]
+            self.port = int(parsed.netloc.split(':')[1])
+        except IndexError:
+            if parsed.scheme == 'https':
+                self.port = 443
+            else:
+                self.port = 80
+
+        self.ip_addr = socket.gethostbyname(self.vhost)
+        self.http_host = '{0}://{1}:{2}{3}'.format(parsed.scheme, self.ip_addr, self.port, parsed.path)
+        self.headers = {'Host' : self.vhost}
+        self.requests_session = requests.Session()
         self.incomming_data = []
         self.outgoing_data  = []
 
@@ -66,21 +82,19 @@ class HTTPSocks5Adapter:
     @staticmethod
     def check_service(http_host):
         try:
-            response = urllib2.urlopen(http_host)
+            response = requests.get(http_host, verify=False)
         except urllib2.HTTPError as e:
             return False
 
-        if response.read() == '|90':
+        if response.content == '|90':
             return True
         return False
 
     @staticmethod
     def begin_service(http_host):
         try:
-            response = urllib2.urlopen(http_host + '?server', timeout=4)
-        except socket.timeout:
-            return True
-        except ssl.SSLError:
+            response = requests.get(http_host + '?server', timeout=4, verify=False)
+        except requests.exceptions.Timeout:
             return True
         except urllib2.HTTPError as e:
             return False
@@ -89,15 +103,12 @@ class HTTPSocks5Adapter:
 
     @staticmethod
     def end_service(http_host):
-
-        request = urllib2.Request(http_host, 'data=|{0}'.format(HTTPSocks5Adapter.END_SERVICE))
-
+        post_data = { 'data' : '|{0}'.format(HTTPSocks5Adapter.END_SERVICE)}
         try:
-            response = urllib2.urlopen(request)
+            response = requests.post(http_host, data=post_data, verify=False)
         except urllib2.HTTPError as e:
             return False
-
-        if response.read() == '|00':
+        if response.content == '|00':
             return True
         return False
 
@@ -110,17 +121,17 @@ class HTTPSocks5Adapter:
         self.hostname = host
         self.hostport = port
 
-        request = urllib2.Request(self.http_host, 'data=|02|{0}:{1}'.format(host, port))
+        post_data = { 'data' : '|02|{0}:{1}'.format(host, port)}
 
         self.requests_sem.acquire()
         try:
-            response = urllib2.urlopen(request)
+            response = requests.post(self.http_host, data=post_data, headers=self.headers, verify=False)
         except urllib2.HTTPError as e:
             return self.HTTP_REQUEST_FAIL
         finally:
             self.requests_sem.release()
 
-        data = response.read()
+        data = response.content
 
         response = data.split('|')
 
@@ -136,24 +147,21 @@ class HTTPSocks5Adapter:
 
 
     def _update_data(self):
-
-        request = 'data=|00|{0}'.format(self.stream_id)
+        post_data = {'data' : '|00|{0}'.format(self.stream_id)}
         if self.outgoing_data:
-            data = urllib.quote(self.outgoing_data.pop(0).encode('base64'))
-            request += '|{0}'.format(data)
-
-        request = urllib2.Request(self.http_host, request)
+            data = self.outgoing_data.pop(0).encode('base64')
+            post_data['data'] += '|{0}'.format(data)
 
         self.requests_sem.acquire()
         try:
-            response = urllib2.urlopen(request)
-        except urllib2.HTTPError as e:
-            self.stream_id = None
-            return False
+            response = requests.post(self.http_host, data=post_data, headers=self.headers, verify=False)
+        #except urllib2.HTTPError as e:
+        #    self.stream_id = None
+        #    return False
         finally:
             self.requests_sem.release()
 
-        data = response.read()
+        data = response.content
 
         response = data.split('|')
 
@@ -179,7 +187,6 @@ class HTTPSocks5Adapter:
             self.stream_id = None
 
         return False
-
 
     def recv(self, size):
 
@@ -218,9 +225,7 @@ class HTTPSocks5Adapter:
         if not self.stream_id:
             return
 
-        request = urllib2.Request(self.http_host, 'data=|01|{0}'.format(self.stream_id))
-
+        post_data = {'data' : '|01|{0}'.format(self.stream_id)}
         self.requests_sem.acquire()
-        response = urllib2.urlopen(request)
+        response = self.requests_session.post(self.http_host, data=post_data, verify=False)
         self.requests_sem.release()
-

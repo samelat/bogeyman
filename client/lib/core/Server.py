@@ -42,10 +42,10 @@ class Server:
                 stream.start()
 
                 self.streams.append(stream)
-        except Exception as e:
-            self.status_bar.error(str(e))
-            pass
-        except:
+        #except Exception as e:
+        #    self.status_bar.error(str(e))
+        #    pass
+        except IndexError:
             self.status_bar.info('Closing all connections')
             pass
 
