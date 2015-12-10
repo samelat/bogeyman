@@ -1,4 +1,29 @@
 
 -- Introduction --
-    The idea here is try to explain the protocol behind Bogeyman, allowing others to implement their
-own solutions.
+
+
+-- Header --
+     8bits
+    +-----+------------+
+    | CMD | PARAMETERS |
+    +-----+------------+
+
+-- Commands --
+
+    00 (Create Stream) - params: <hostname><port>
+        Creates a new stream.
+
+    01 (Data Sync) - params: <stream_id><data>
+        Starts data syncronization between the stream two sides.
+
+    03 (Close Stream) - params: <stream_id>
+        Closes stream.
+
+    04 (Ping) - No parameters
+        Send a ping command. This command expect a Pong command, else It assume the connection is down.
+
+    05 (Pong) - No parameters
+        Ping response command.
+
+    06 (Set Stream Status) - params: <stream_id><status>
+        Set the stream status in the other side of the connection.
