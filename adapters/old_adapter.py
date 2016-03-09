@@ -2,7 +2,7 @@
 import struct
 
 
-class Socks:
+class Adapter:
 
     # SOCKS AUTH METHODS
     AUTH_NONE = 0
@@ -17,16 +17,15 @@ class Socks:
     ADDR_DNAME = 3
     ADDR_V6 = 4
 
+    def __init__(self, sock, stream_id, core):
+        self.sock = sock
+        self.id = stream_id
+        self.core = core
 
-    def __init__(self, sock):
-        Thread.__init__(self)
-        self.socket = sock
+    def handshake(self):
+        print('[!] Socks5 Handshake :)')
 
-    # Handle the socket and negotiate with the client, returning the result information.
-    def handle(self, sock):
-        pass
-
-
+    '''
     def handshake(self):
 
         # Authentication handler
@@ -99,8 +98,9 @@ class Socks:
             return False
 
         return True
+    '''
 
-
+    '''
     def _main_loop(self):
 
         _incomming_data = ''
@@ -140,3 +140,4 @@ class Socks:
         # Flush the reminding data and close the connection
         if self._continue:
             self.remote_host.close()
+    '''
