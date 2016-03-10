@@ -29,6 +29,9 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--verbosity', action='count', default=0,
                         help='Increase output verbosity.')
 
+    parser.add_argument('-l', '--log', default='notset',
+                        choices=['debug', 'info', 'warning', 'error', 'critical'])
+
     args = parser.parse_args()
 
     loop = asyncio.get_event_loop()
