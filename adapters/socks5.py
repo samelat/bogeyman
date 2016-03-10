@@ -118,10 +118,10 @@ class Socks5:
         print('[!] Closing connection #{0}'.format(cid))
         with (yield from self.lock):
             # We have to control if the writer was not closed by a "disconnect" message first.
-            if self.streams[cid]['status'] != -1:
+            if self.streams[cid]['status'] == 0:
                 yield from writer.drain()
                 writer.close()
-            del(self.streams[message['id']])
+            del(self.streams[cid])
 
     @asyncio.coroutine
     def execute(self, message):
@@ -135,7 +135,9 @@ class Socks5:
                 if message['id'] in self.streams:
                     yield from self.streams[message['id']]['writer'].drain()
                     self.streams[message['id']]['writer'].close()
-                    self.streams[message['id']]['status'] = -1
+                    self.streams[message['id']]['status'] = -2
+                    self.lock.notify_all()
+                print('[!] #{} Disconnected'.format(message['id']))
 
             elif message['cmd'] == 'sync':
                 data = base64.b64decode(message['data'].encode('ascii'))

@@ -31,6 +31,18 @@ class Stream(asyncio.Protocol):
         print('The server closed the connection')
         print('Stop the event loop')
 
+    @asyncio.coroutine
+    def connect(self, address, port):
+        try:
+            yield from self.tunnel.loop.create_connection(lambda: self, address, port)
+            self.tunnel.streams[self.sid] = self
+            self.tunnel.dispatch({'cmd': 'status', 'value': 0, 'id': self.sid})
+
+        except Exception as e:
+            print(e)
+            print('[!] Connection refused: {}:{}'.format(address, port))
+            self.tunnel.dispatch({'cmd': 'status', 'value': 5, 'id': self.sid})
+
 
 class Tunnel:
 
@@ -61,11 +73,9 @@ class Tunnel:
                 stream = Stream(message['id'], self)
                 try:
                     print('[!] Trying to connect to {addr}:{port}'.format(**message))
-                    yield from self.loop.create_connection(lambda: stream, message['addr'], message['port'])
+                    # yield from self.loop.create_connection(lambda: stream, message['addr'], message['port'])
+                    asyncio.async(stream.connect(message['addr'], message['port']), loop=self.loop)
                     print('[!] Connection done')
-
-                    self.streams[message['id']] = stream
-                    self.dispatch({'cmd': 'status', 'value': 0, 'id': message['id']})
 
                 except Exception as e:
                     print(e)
@@ -80,24 +90,24 @@ class Tunnel:
     @asyncio.coroutine
     def connect(self):
         while True:
-            try:
-                reader, writer = yield from asyncio.open_connection(self.address, self.port, loop=self.loop)
-                yield from self.handle(reader, writer)
+            # try:
+            reader, writer = yield from asyncio.open_connection(self.address, self.port, loop=self.loop)
+            yield from self.handle(reader, writer)
 
-            except Exception:
-                print('[!] Tunnel connection exception')
-                # It waits 1 second before try again.
-                yield from asyncio.sleep(1)
+            # except Exception:
+            #     print('[!] Tunnel connection exception')
+            #     # It waits 1 second before try again.
+            #     yield from asyncio.sleep(1)
 
     def start(self, reverse):
         self.loop = asyncio.get_event_loop()
 
         if reverse:
-            try:
-                self.loop.run_until_complete(self.connect())
+            # try:
+            self.loop.run_until_complete(self.connect())
 
-            except Exception:
-                print('CCCCCCCCCCCCCCCCCCCCCCC')
+            # except Exception:
+            #     print('CCCCCCCCCCCCCCCCCCCCCCC')
 
         else:
             '''
