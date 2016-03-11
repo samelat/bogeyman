@@ -65,7 +65,7 @@ class Tunnel:
         self.writer.write(struct.pack('>H', len(data)) + data)
 
     @asyncio.coroutine
-    def handle(self, reader, writer):
+    def handler(self, reader, writer):
         self.writer = writer
         # Handles each incoming message
         while True:
@@ -88,7 +88,7 @@ class Tunnel:
     def connect(self):
         while True:
             reader, writer = yield from asyncio.open_connection(self.address, self.port, loop=self.loop)
-            yield from self.handle(reader, writer)
+            yield from self.handler(reader, writer)
 
     def start(self, reverse):
         self.loop = asyncio.get_event_loop()

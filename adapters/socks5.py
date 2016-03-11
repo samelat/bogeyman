@@ -4,6 +4,7 @@ import struct
 import random
 import socket
 import asyncio
+import logging
 
 
 class Socks5:
@@ -13,6 +14,7 @@ class Socks5:
         self.port = port
         self.tunnel = None
 
+        self.server = None
         self.loop = None
         self.lock = asyncio.Condition()
         self.streams = {}
@@ -143,16 +145,23 @@ class Socks5:
                 data = base64.b64decode(message['data'].encode('ascii'))
                 self.streams[message['id']]['writer'].write(data)
 
+            elif message['cmd'] == 'stop':
+                self.server.close()
+                self.loop.run_until_complete(self.server.wait_closed())
+
     def dispatch(self, message):
         def async_execute(msg):
             asyncio.async(self.execute(msg), loop=self.loop)
         self.loop.call_soon_threadsafe(async_execute, message)
 
+    def stop(self):
+        self.server.close()
+        self.loop.run_until_complete(self.server.wait_closed())
+
     def start(self, loop):
         self.loop = loop
         handler = asyncio.start_server(self.new_connection, self.address, self.port, loop=loop)
-        server = loop.run_until_complete(handler)
-        print('[!] Socks5 listening on {}'.format(server.sockets[0].getsockname()))
-        return server
+        self.server = loop.run_until_complete(handler)
+        print('[!] Socks5 listening on {}'.format(self.server.sockets[0].getsockname()))
 
 
