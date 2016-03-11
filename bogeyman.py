@@ -17,15 +17,15 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--address', default='127.0.0.1',
                         help='adapter interface.')
 
-    parser.add_argument('-l', '--log', default='notset',
+    parser.add_argument('-l', '--log', default='info',
                         choices=['debug', 'info', 'warning', 'error', 'critical'])
 
-    parser.add_argument('parameters', nargs='*', help='Tunnel parameters')
+    parser.add_argument('parameters', nargs='*', help='tunnel parameters')
 
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log.upper()),
-                        format='[%(levelname)-0.1s] %(message)s')
+                        format='[%(levelname)-0.1s][%(module)s] %(message)s')
 
     params = dict([tuple(param.split('=')[:2]) if '=' in param else (param, None) for param in args.parameters])
     tunnel = tunnels.TCP(params)
@@ -43,10 +43,3 @@ if __name__ == '__main__':
         loop.run_forever()
     except KeyboardInterrupt:
         pass
-
-    # Close the services
-    # tunnel.stop()
-    # loop.run_until_complete(tunnel_server.wait_closed())
-    adapter.stop()
-    # loop.run_until_complete(adapter_server.wait_closed())
-    loop.close()

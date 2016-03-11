@@ -28,24 +28,24 @@ class Socks5:
         # New connection ID (src address, src port).
         cid = random.getrandbits(32)
         src_info = writer.get_extra_info('peername')
-        print('[!] Connection #{} from: {}:{}'.format(cid, *src_info))
+        logging.info('[#{}] connection from: {}:{}'.format(cid, *src_info))
 
         # Start Socks5 protocol implementation
         data = yield from reader.readexactly(2)
         version, nmethods = struct.unpack('BB', data)
-        print('[!] Socks version: {} - Number of methods: {}'.format(version, nmethods))
+        logging.debug('[#{}] socks version: {} - Number of methods: {}'.format(cid, version, nmethods))
 
         if version not in [4, 5] or nmethods < 1:
-            print('[e] Incorrect header information')
+            logging.debug('[#{}] incorrect header information'.format(cid))
             writer.close()
             return
 
         data = yield from reader.readexactly(nmethods)
         methods = list(data)
-        print('[!] Suggested auth methods: {}'.format(methods))
+        logging.debug('[#{}] suggested auth methods: {}'.format(cid, methods))
         # For now we only accept non-authentication.
         if 0 not in methods:
-            print('[e] Authentication methods not supported')
+            logging.debug('[#{}] authentication methods not supported'.format(cid))
             writer.close()
             return
 
@@ -59,7 +59,7 @@ class Socks5:
         data = yield from reader.readexactly(4)
         _, command, _, address_type = struct.unpack('BBBB', data)
         if address_type not in [1, 3]:
-            print('[e] Authentication methods not supported')
+            logging.debug('[#{}] address type not supported'.format(cid))
             # +----+-----+-----+------+----------+----------+
             # |VER | REP | RSV | ATYP | BND.ADDR | BND.PORT |
             # +----+-----+-----+------+----------+----------+
@@ -82,7 +82,7 @@ class Socks5:
 
         # We will implement ipv6 when we need it :P.
 
-        print('[!] Trying to connect to {}:{}'.format(address, port))
+        logging.info('[#{}] trying to connect to {}:{}'.format(cid, address, port))
         with (yield from self.lock):
             self.streams[cid] = {'writer': writer, 'status': -1}
 
@@ -92,7 +92,7 @@ class Socks5:
         # and we wait for the connection's result ...
         with (yield from self.lock):
             while self.streams[cid]['status'] is -1:
-                print('[!] Waiting until stream status change')
+                logging.debug('[#{}] waiting until stream status change'.format(cid))
                 yield from self.lock.wait()
             reply = self.streams[cid]['status']
 
@@ -109,7 +109,7 @@ class Socks5:
 
         while True:
             data = yield from reader.read(8192)
-            print('[!] Received data: {}'.format(repr(data)))
+            logging.debug('[#{}] received data: {}'.format(cid, repr(data)))
             if not data:
                 break
 
@@ -117,7 +117,7 @@ class Socks5:
             message = {'cmd': 'sync', 'data': b64data, 'id': cid}
             self.tunnel.dispatch(message)
 
-        print('[!] Closing connection #{0}'.format(cid))
+        logging.debug('Closing connection #{}'.format(cid))
         with (yield from self.lock):
             # We have to control if the writer was not closed by a "disconnect" message first.
             if self.streams[cid]['status'] == 0:
@@ -127,7 +127,7 @@ class Socks5:
 
     @asyncio.coroutine
     def execute(self, message):
-        print('[!] Executing message {}'.format(message))
+        logging.debug('executing message {}'.format(message))
         with (yield from self.lock):
             if message['cmd'] == 'status':
                 self.streams[message['id']]['status'] = message['value']
@@ -139,15 +139,20 @@ class Socks5:
                     self.streams[message['id']]['writer'].close()
                     self.streams[message['id']]['status'] = -2
                     self.lock.notify_all()
-                print('[!] #{} Disconnected'.format(message['id']))
+                logging.debug('[#{}] disconnected'.format(message['id']))
 
             elif message['cmd'] == 'sync':
-                data = base64.b64decode(message['data'].encode('ascii'))
-                self.streams[message['id']]['writer'].write(data)
+                if message['id'] in self.streams:
+                    data = base64.b64decode(message['data'].encode('ascii'))
+                    self.streams[message['id']]['writer'].write(data)
 
             elif message['cmd'] == 'stop':
                 self.server.close()
-                self.loop.run_until_complete(self.server.wait_closed())
+                try:
+                    yield from asyncio.wait_for(self.server.wait_closed(), 2.0, loop=self.loop)
+                except asyncio.TimeoutError:
+                    pass
+                self.loop.stop()
 
     def dispatch(self, message):
         def async_execute(msg):
@@ -162,6 +167,4 @@ class Socks5:
         self.loop = loop
         handler = asyncio.start_server(self.new_connection, self.address, self.port, loop=loop)
         self.server = loop.run_until_complete(handler)
-        print('[!] Socks5 listening on {}'.format(self.server.sockets[0].getsockname()))
-
-
+        logging.info('listening on {}:{}'.format(self.address, self.port))

@@ -52,8 +52,8 @@ class Stream(asyncio.Protocol):
 
 class Tunnel:
 
-    def __init__(self, address, port):
-        self.address = address
+    def __init__(self, host, port):
+        self.host = host
         self.port = port
         self.loop = None
         self.writer = None
@@ -73,7 +73,7 @@ class Tunnel:
             size = struct.unpack('>H', data)[0]
             data = yield from reader.readexactly(size)
             message = json.loads(data.decode('ascii'))
-            logging.debug('New message: {}'.format(message))
+            logging.debug('new message {}'.format(message))
 
             if message['cmd'] == 'connect':
                 stream = Stream(message['id'], self)
@@ -87,8 +87,22 @@ class Tunnel:
     @asyncio.coroutine
     def connect(self):
         while True:
-            reader, writer = yield from asyncio.open_connection(self.address, self.port, loop=self.loop)
-            yield from self.handler(reader, writer)
+            logging.info('connecting to {}:{}'.format(self.host, self.port))
+            try:
+                connect_coro = asyncio.open_connection(self.host, self.port, loop=self.loop)
+                reader, writer = yield from asyncio.wait_for(connect_coro, 8.0)
+                yield from self.handler(reader, writer)
+
+            except asyncio.TimeoutError:
+                logging.info('connection timeout')
+
+            except ConnectionRefusedError:
+                logging.info('connection refused')
+                yield from asyncio.sleep(8.0)
+
+            except Exception as e:
+                logging.error('unknown tunnel exception: {}'.format(e))
+                break
 
     def start(self, reverse):
         self.loop = asyncio.get_event_loop()
@@ -98,28 +112,14 @@ class Tunnel:
                 self.loop.run_until_complete(self.connect())
 
             else:
-                '''
-                handler = asyncio.start_server(self.new_connection, self.hostname, self.port, loop=loop)
-                server = loop.run_until_complete(handler)
-
-                coro = asyncio.start_server(handle_echo, '127.0.0.1', 8888, loop=loop)
-                server = self.loop.run_until_complete(coro)
-
-                # Serve requests until Ctrl+C is pressed
-                print('Serving on {}'.format(server.sockets[0].getsockname()))
-                try:
-                    loop.run_forever()
-                except KeyboardInterrupt:
-                    pass
-
-                # Close the server
-                server.close()
-                loop.run_until_complete(server.wait_closed())
-                '''
+                server_coroutine = asyncio.start_server(self.handler, self.host, self.port, loop=self.loop)
+                self.loop.run_until_complete(server_coroutine)
+                logging.info('listening on {}:{}'.format(self.host, self.port))
+                self.loop.run_forever()
         except KeyboardInterrupt:
             pass
 
-        logging.debug('Closing loop')
+        logging.debug('closing loop')
         self.loop.close()
 
 if __name__ == "__main__":
@@ -129,19 +129,19 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--port', type=int, default=8888,
                         help='host port. default 8888')
 
-    parser.add_argument('-a', '--host', default='127.0.0.1',
+    parser.add_argument('-i', '--host', default='127.0.0.1',
                         help='host address. default 127.0.0.1')
 
     parser.add_argument('-r', '--reverse', action='store_true',
                         help='use reverse connection')
 
-    parser.add_argument('-l', '--log', default='notset',
+    parser.add_argument('-l', '--log', default='info',
                         choices=['debug', 'info', 'warning', 'error', 'critical'])
 
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log.upper()),
-                        format='[%(levelname)-0.1s] %(message)s')
+                        format='[%(levelname)-0.1s][%(module)s] %(message)s')
 
     tunnel = Tunnel(args.host, args.port)
     tunnel.start(args.reverse)
