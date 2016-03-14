@@ -18,7 +18,12 @@ if __name__ == '__main__':
                         help='adapter interface.')
 
     parser.add_argument('-l', '--log', default='info',
-                        choices=['debug', 'info', 'warning', 'error', 'critical'])
+                        choices=['debug', 'info', 'warning', 'error', 'critical'],
+                        help='logging level')
+
+    parser.add_argument('-t', '--tunnel', default='tcp',
+                        choices=['tcp', 'http'],
+                        help='tunnel module')
 
     parser.add_argument('parameters', nargs='*', help='tunnel parameters')
 
