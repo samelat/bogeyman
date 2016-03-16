@@ -9,7 +9,7 @@ import struct
 import logging
 import argparse
 
-from threading import Thread, Lock
+from threading import Thread, Condition
 
 
 class Stream(socket.socket):
@@ -26,22 +26,32 @@ class Tunnel:
         self.port = port
         self.sock = None
 
-        self.running = True
-        self.lock = Lock()
+        # Stage 2 - trying to reconnect tunnel
+        # Stage 1 - tunnel working
+        # Stage 0 - aborting
+        self.stage = 2
+        self.lock = Condition()
         self.streams = {}
         self.streams_thread = None
         self.connecting_streams = []
 
     # Send message back to the other tunnel extreme.
     def dispatch(self, message):
+        with self.lock:
+            while self.stage == 2:
+                self.lock.wait()
+            if self.stage == 0:
+                raise SystemExit
         data = json.dumps(message).encode()
         self.sock.send(struct.pack('>H', len(data)) + data)
 
     def streams_handler(self):
 
         error_to_status = {111: 5, 0: 0}
-        while self.running:
+        while True:
             with self.lock:
+                if self.stage == 0:
+                    raise SystemExit
                 active_streams = list(self.streams.values())
                 connecting_streams = list(self.connecting_streams)
 
@@ -52,12 +62,14 @@ class Tunnel:
                 error = stream.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
                 # 4 is the default status
                 status = error_to_status.get(error, 4)
+
+                self.dispatch({'cmd': 'status', 'value': status, 'id': stream.sid})
                 if status == 0:
                     with self.lock:
                         self.streams[stream.sid] = stream
+                    logging.info('connection #{} done'.format(stream.id))
                 else:
                     stream.close()
-                self.dispatch({'cmd': 'status', 'value': status, 'id': stream.sid})
 
             processed_sids = set([stream.sid for stream in connected_streams])
             current_time = time.time()
@@ -91,7 +103,7 @@ class Tunnel:
         logging.info('connected')
 
         # Handles each incoming message
-        while self.running:
+        while self.stage > 0:
             data = self.sock.recv(2, socket.MSG_WAITALL)
             if len(data) < 2:
                 break
@@ -108,6 +120,7 @@ class Tunnel:
                 stream = Stream(message['id'])
                 stream.setblocking(0)
                 stream.connect_ex((message['addr'], message['port']))
+                logging.info('waiting connection #{id} to {addr}:{port}'.format(**message))
                 with self.lock:
                     self.connecting_streams.append(stream)
 
@@ -119,7 +132,7 @@ class Tunnel:
 
             elif message['cmd'] == 'stop':
                 with self.lock:
-                    self.running = False
+                    self.stage = 0
 
     # Keeps connecting with the other tunnel extreme.
     def start(self, reverse):
@@ -137,7 +150,7 @@ class Tunnel:
                 logging.info('listening on {}:{}'.format(self.host, self.port))
 
             # Reconnects until KeyboardInterrupt occur.
-            while self.running:
+            while self.stage > 0:
                 try:
                     if reverse:
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -170,7 +183,7 @@ class Tunnel:
             main_sock.close()
 
         with self.lock:
-            self.running = False
+            self.stage = 0
         self.streams_thread.join(2.0)
 
         logging.debug('shutting down')

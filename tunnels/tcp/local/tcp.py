@@ -23,11 +23,11 @@ class TCP(asyncio.Protocol):
 
     def dispatch(self, message):
         if self.writer is None:
-            return False
+            return True
         logging.debug('receive message {}'.format(message))
         data = json.dumps(message).encode()
         self.writer.write(struct.pack('>H', len(data)) + data)
-        return True
+        return False
 
     @asyncio.coroutine
     def handler(self, reader, writer):

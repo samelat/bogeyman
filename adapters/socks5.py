@@ -75,7 +75,6 @@ class Socks5:
         elif address_type is 3:
             data = yield from reader.readexactly(1)
             domain_size = struct.unpack('B', data)[0]
-            print(domain_size)
             data = yield from reader.readexactly(domain_size + 2)
             address = data[:domain_size].decode('ascii')
             port = struct.unpack('>H', data[domain_size:])[0]
@@ -87,7 +86,7 @@ class Socks5:
             self.streams[cid] = {'writer': writer, 'status': -1}
 
         # Once we know where the client wants to connect to, we send the command to the tunnel.
-        while not self.tunnel.dispatch({'cmd': 'connect', 'addr': address, 'port': port, 'id': cid}):
+        while self.tunnel.dispatch({'cmd': 'connect', 'addr': address, 'port': port, 'id': cid}):
             yield from asyncio.sleep(1.0)
 
         # and we wait for the connection's result ...
@@ -116,7 +115,7 @@ class Socks5:
 
             b64data = base64.b64encode(data).decode('ascii')
             message = {'cmd': 'sync', 'data': b64data, 'id': cid}
-            while not self.tunnel.dispatch(message):
+            while self.tunnel.dispatch(message):
                 yield from asyncio.sleep(1.0)
 
         logging.debug('Closing connection #{}'.format(cid))
