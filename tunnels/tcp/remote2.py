@@ -46,7 +46,6 @@ class Tunnel:
         self.sock.send(struct.pack('>H', len(data)) + data)
 
     def streams_handler(self):
-
         error_to_status = {111: 5, 0: 0}
         while True:
             with self.lock:
@@ -67,7 +66,7 @@ class Tunnel:
                 if status == 0:
                     with self.lock:
                         self.streams[stream.sid] = stream
-                    logging.info('connection #{} done'.format(stream.id))
+                    logging.info('connection #{} done'.format(stream.sid))
                 else:
                     stream.close()
 
@@ -81,6 +80,7 @@ class Tunnel:
                     if (current_time - stream.creation) < 8.0:
                         self.connecting_streams.append(stream)
                     else:
+                        logging.debug('[#{}] connection timeout'.format(stream.sid))
                         stream.close()
 
             for stream in ready_streams:
@@ -103,7 +103,11 @@ class Tunnel:
         logging.info('connected')
 
         # Handles each incoming message
-        while self.stage > 0:
+        while True:
+            with self.lock:
+                if self.stage == 0:
+                    break
+
             data = self.sock.recv(2, socket.MSG_WAITALL)
             if len(data) < 2:
                 break
@@ -150,7 +154,11 @@ class Tunnel:
                 logging.info('listening on {}:{}'.format(self.host, self.port))
 
             # Reconnects until KeyboardInterrupt occur.
-            while self.stage > 0:
+            while True:
+                with self.lock:
+                    if self.stage == 0:
+                        break
+
                 try:
                     if reverse:
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -173,7 +181,12 @@ class Tunnel:
 
                 except socket.error:
                     logging.info('connection refused')
-                    time.sleep(8.0)
+
+                with self.lock:
+                    self.stage = 2
+
+                logging.debug('waiting 4 seconds before retrying reconnection')
+                time.sleep(4.0)
 
         except KeyboardInterrupt:
             logging.info('please wait until the program stops...')
@@ -181,11 +194,12 @@ class Tunnel:
         except Exception as e:
             logging.error('tunnel exception: {}'.format(e))
 
+        with self.lock:
+            self.stage = 0
+
         if main_sock is not None:
             main_sock.close()
 
-        with self.lock:
-            self.stage = 0
         self.streams_thread.join(2.0)
 
         logging.debug('shutting down')

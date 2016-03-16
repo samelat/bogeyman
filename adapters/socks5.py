@@ -122,7 +122,10 @@ class Socks5:
         with (yield from self.lock):
             # We have to control if the writer was not closed by a "disconnect" message first.
             if self.streams[cid]['status'] == 0:
-                yield from writer.drain()
+                try:
+                    yield from writer.drain()
+                except ConnectionResetError:
+                    pass
                 writer.close()
             del(self.streams[cid])
 
@@ -132,7 +135,10 @@ class Socks5:
         with (yield from self.lock):
             if message['cmd'] == 'status':
                 if message['value'] < 0:
-                    yield from self.streams[message['id']]['writer'].drain()
+                    try:
+                        yield from self.streams[message['id']]['writer'].drain()
+                    except ConnectionResetError:
+                        pass
                     self.streams[message['id']]['writer'].close()
                 self.streams[message['id']]['status'] = message['value']
                 self.lock.notify_all()
