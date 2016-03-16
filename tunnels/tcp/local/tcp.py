@@ -22,9 +22,12 @@ class TCP(asyncio.Protocol):
         self.adapter = peer
 
     def dispatch(self, message):
+        if self.writer is None:
+            return False
         logging.debug('receive message {}'.format(message))
         data = json.dumps(message).encode()
         self.writer.write(struct.pack('>H', len(data)) + data)
+        return True
 
     @asyncio.coroutine
     def handler(self, reader, writer):
@@ -36,7 +39,6 @@ class TCP(asyncio.Protocol):
                 data = yield from reader.readexactly(2)
                 size = struct.unpack('>H', data)[0]
                 data = yield from reader.readexactly(size)
-                logging.debug('read data {}'.format(data))
 
             except asyncio.streams.IncompleteReadError:
                 self.writer = None
@@ -45,7 +47,7 @@ class TCP(asyncio.Protocol):
 
             message = json.loads(data.decode('ascii'))
 
-            logging.info('incoming message {}'.format(message))
+            logging.debug('incoming message {}'.format(message))
             self.adapter.dispatch(message)
 
         logging.info('connection lost')
@@ -65,7 +67,7 @@ class TCP(asyncio.Protocol):
 
             except ConnectionRefusedError:
                 logging.info('connection refused')
-                yield from asyncio.sleep(8.0)
+                yield from asyncio.sleep(4.0)
 
             except Exception as e:
                 logging.error('unknown tunnel exception: {}'.format(e))

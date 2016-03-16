@@ -87,7 +87,8 @@ class Socks5:
             self.streams[cid] = {'writer': writer, 'status': -1}
 
         # Once we know where the client wants to connect to, we send the command to the tunnel.
-        self.tunnel.dispatch({'cmd': 'connect', 'addr': address, 'port': port, 'id': cid})
+        while not self.tunnel.dispatch({'cmd': 'connect', 'addr': address, 'port': port, 'id': cid}):
+            yield from asyncio.sleep(1.0)
 
         # and we wait for the connection's result ...
         with (yield from self.lock):
@@ -115,7 +116,8 @@ class Socks5:
 
             b64data = base64.b64encode(data).decode('ascii')
             message = {'cmd': 'sync', 'data': b64data, 'id': cid}
-            self.tunnel.dispatch(message)
+            while not self.tunnel.dispatch(message):
+                yield from asyncio.sleep(1.0)
 
         logging.debug('Closing connection #{}'.format(cid))
         with (yield from self.lock):

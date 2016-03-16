@@ -93,9 +93,14 @@ class Tunnel:
         # Handles each incoming message
         while self.running:
             data = self.sock.recv(2, socket.MSG_WAITALL)
+            if len(data) < 2:
+                break
+
             size = struct.unpack('>H', data)[0]
             data = self.sock.recv(size, socket.MSG_WAITALL)
-            print(repr(data))
+            if len(data) < size:
+                break
+
             message = json.loads(data)
             logging.debug('new message {}'.format(message))
 
@@ -145,6 +150,8 @@ class Tunnel:
 
                     self.sock = sock
                     self.tunnel_handler()
+
+                    logging.info('connection closed')
 
                 except socket.timeout:
                     logging.info('connection timeout')
