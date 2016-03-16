@@ -162,6 +162,8 @@ class Tunnel:
                         logging.info('connection from {}:{}'.format(*address))
 
                     self.sock = sock
+                    with self.lock:
+                        self.stage = 1
                     self.tunnel_handler()
 
                     logging.info('connection closed')
