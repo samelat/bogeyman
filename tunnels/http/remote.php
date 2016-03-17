@@ -28,36 +28,7 @@
         }
     }
 
-    /*
-    class TCPStream extends Stream {
-
-    }
-    */
-
-    /* 
-     * Comandos Request
-     *    00    - data refresh          - <stream_id>|<outgoing_data>
-     *                         Response - <response_code>|<incomming_data>
-     *
-     *    01    - close socket          - <stream_id>
-     *                         Response - <response_code>
-     *
-     *    02    - create tcp stream     - <hostname><port>
-     *                         Response - <response_code>
-     *
-     *    99    - Halt server           -
-     *                         Response - 00
-     * 
-     * Response codes
-     *    00    - OK
-     *    01    - Connection Refused
-     *    02    - Connection Closed
-     *
-     *    50    - Malformed request
-     *    51    - Unknown command
-     *    52    - Unknown parameter
-     */
-    class Server {
+    class Tunnel {
 
         // Socket layer errors
         const SUCCESS            = 0;

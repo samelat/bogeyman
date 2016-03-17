@@ -34,7 +34,8 @@ if __name__ == '__main__':
                         format='[%(levelname)-0.1s][%(module)s] %(message)s')
 
     params = dict([tuple(param.split('=')[:2]) if '=' in param else (param, None) for param in args.parameters])
-    tunnel = tunnels.TCP(params)
+    tunnel_class = getattr(tunnels, args.tunnel.upper())
+    tunnel = tunnel_class(params)
 
     adapter = adapters.Socks5(args.address, args.port)
 

@@ -9,10 +9,13 @@ class HTTP:
 
     def __init__(self, params):
         self.url = params.get('url', 'http://127.0.0.1/remote.php')
-        self.number_of_threads = int(params.get('threads'), 1)
+        self.number_of_threads = int(params.get('threads', 1))
 
+        # Stage 2: Trying to reconnect tunnel
+        # Stage 1: Tunnel is working
+        # Stage 0: Aborting
+        self.stage = 2
         self.adapter = None
-        self.running = True
         self.threads = []
         self.lock = Condition()
         self.messages = []
@@ -26,6 +29,15 @@ class HTTP:
             self.messages.append(message)
             self.lock.notify_all()
 
+    # Waits until a message arrived or return None if we have to abort.
+    def get_message(self):
+        with self.lock:
+            while not self.messages:
+                self.lock.wait()
+                if self.stage == 0:
+                    return None
+        return self.messages.pop(0)
+
     def handler(self):
 
         session = requests.Session()
@@ -34,20 +46,19 @@ class HTTP:
             session.cookies = self.cookies.copy()
 
         while True:
-            with self.lock:
-                if not self.running:
-                    break
-                message = self.messages.pop(0)
+            message = self.get_message()
+            if message is None:
+                break
 
             response = session.post(self.url, data=json.dumps(message))
-            messages = response.json()
-            if messages:
-                for message in messages:
-                    pass
+            print(response.text)
+            for message in response.json():
+                    self.adapter.dispatch(message)
 
     def stop(self):
         with self.lock:
-            self.running = False
+            self.stage = 0
+            self.lock.notify_all()
         current_id = threading.get_ident()
         for thread in self.threads:
             if current_id == thread.ident:
