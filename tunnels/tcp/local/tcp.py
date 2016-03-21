@@ -9,7 +9,7 @@ import logging
 class TCP(asyncio.Protocol):
 
     def __init__(self, params):
-        self.host = params.get('host', '127.0.0.1')
+        self.host = params.get('ip', '127.0.0.1')
         self.port = int(params.get('port', 8888))
         self.reverse = 'reverse' in params
 

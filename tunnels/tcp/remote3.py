@@ -6,6 +6,7 @@ import base64
 import asyncio
 import logging
 import argparse
+import configparser
 
 
 class Stream(asyncio.Protocol):
@@ -127,21 +128,31 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-p', '--port', type=int, default=8888,
-                        help='host port. default 8888')
-
-    parser.add_argument('-i', '--host', default='127.0.0.1',
-                        help='host address. default 127.0.0.1')
-
-    parser.add_argument('-r', '--reverse', action='store_true',
-                        help='use reverse connection')
-
-    parser.add_argument('-l', '--log', default='info',
-                        choices=['debug', 'info', 'warning', 'error', 'critical'])
+    parser.add_argument('-p', '--port', type=int, help='host port (default: 8888)')
+    parser.add_argument('-i', '--ip', help='host address. default 127.0.0.1')
+    parser.add_argument('-r', '--reverse', action='store_true', help='use reverse connection')
+    parser.add_argument('-l', '--log', choices=['debug', 'info', 'warning', 'error', 'critical'])
+    parser.add_argument('-c', '--config', default='', help='uses a configuration file')
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log.upper()),
+    # Default configuration
+    config = {'ip': '127.0.0.1', 'port': 1080, 'log': 'info', 'reverse': False}
+
+    # Config file configuration
+    if args.config:
+        config_file = configparser.ConfigParser(allow_no_value=True)
+        if config_file.read(args.config) and ('tcp' in config_file.sections()):
+            # Tunnel configuration
+            for key, value in config_file.items('tcp'):
+                config[key.lower()] = value if value is None else value.lower()
+
+    for option in ['ip', 'port', 'reverse', 'log']:
+        value = getattr(args, option)
+        config[option] = value if value else config[option]
+
+    # Starts program
+    logging.basicConfig(level=getattr(logging, config['log'].upper()),
                         format='[%(levelname)-0.1s][%(module)s] %(message)s')
 
     tunnel = Tunnel(args.host, args.port)

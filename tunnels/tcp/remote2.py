@@ -8,6 +8,7 @@ import select
 import struct
 import logging
 import argparse
+import ConfigParser as configparser
 
 from threading import Thread, Condition
 
@@ -35,22 +36,36 @@ class Tunnel:
         self.streams_thread = None
         self.connecting_streams = []
 
-    # Send message back to the other tunnel extreme.
+    # Sends message back to the other tunnel extreme.
     def dispatch(self, message):
-        with self.lock:
-            while self.stage == 2:
-                self.lock.wait()
-            if self.stage == 0:
-                raise SystemExit
         data = json.dumps(message).encode()
-        self.sock.send(struct.pack('>H', len(data)) + data)
+        data = struct.pack('>H', len(data)) + data
+        while data:
+            with self.lock:
+                # if the tunnel is not connected
+                while self.stage == 2:
+                    self.lock.wait()
+                if self.stage == 0:
+                    return False
+            try:
+                sent_bytes = self.sock.send(data)
+                data = data[sent_bytes:]
+            except Exception as e:
+                logging.debug('[#{}] sending exception: {}'.format(message['id'], e))
+                continue
+        return True
 
     def streams_handler(self):
         error_to_status = {111: 5, 0: 0}
         while True:
             with self.lock:
                 if self.stage == 0:
-                    raise SystemExit
+                    return
+
+                if not (self.streams or self.connecting_streams):
+                    self.lock.wait()
+                    continue
+
                 active_streams = list(self.streams.values())
                 connecting_streams = list(self.connecting_streams)
 
@@ -62,10 +77,13 @@ class Tunnel:
                 # 4 is the default status
                 status = error_to_status.get(error, 4)
 
-                self.dispatch({'cmd': 'status', 'value': status, 'id': stream.sid})
+                if not self.dispatch({'cmd': 'status', 'value': status, 'id': stream.sid}):
+                    return
+
                 if status == 0:
                     with self.lock:
                         self.streams[stream.sid] = stream
+                        self.lock.notify_all()
                     logging.info('connection #{} done'.format(stream.sid))
                 else:
                     stream.close()
@@ -88,7 +106,8 @@ class Tunnel:
                     data = stream.recv(48750)
                     if data:
                         logging.debug('data read: {}'.format(repr(data)))
-                        self.dispatch({'cmd': 'sync', 'data': base64.b64encode(data), 'id': stream.sid})
+                        if not self.dispatch({'cmd': 'sync', 'data': base64.b64encode(data), 'id': stream.sid}):
+                            return
                         continue
 
                 except socket.error as e:
@@ -99,6 +118,15 @@ class Tunnel:
                     stream.close()
                     del(self.streams[stream.sid])
 
+    def fixed_recv(self, size):
+        total_data = b''
+        while len(total_data) < size:
+            data = self.sock.recv(size - len(total_data))
+            if not data:
+                return None
+            total_data += data
+        return total_data
+
     def tunnel_handler(self):
         logging.info('connected')
 
@@ -108,13 +136,15 @@ class Tunnel:
                 if self.stage == 0:
                     break
 
-            data = self.sock.recv(2, socket.MSG_WAITALL)
-            if len(data) < 2:
+            # Reads message size
+            data = self.fixed_recv(2)
+            if data is None:
                 break
-
             size = struct.unpack('>H', data)[0]
-            data = self.sock.recv(size, socket.MSG_WAITALL)
-            if len(data) < size:
+
+            # Reads message
+            data = self.fixed_recv(size)
+            if data is None:
                 break
 
             message = json.loads(data)
@@ -127,6 +157,7 @@ class Tunnel:
                 logging.info('waiting connection #{id} to {addr}:{port}'.format(**message))
                 with self.lock:
                     self.connecting_streams.append(stream)
+                    self.lock.notify_all()
 
             elif message['cmd'] == 'sync':
                 data = base64.b64decode(message['data'])
@@ -137,6 +168,7 @@ class Tunnel:
             elif message['cmd'] == 'stop':
                 with self.lock:
                     self.stage = 0
+                    self.lock.notify_all()
 
     # Keeps connecting with the other tunnel extreme.
     def start(self, reverse):
@@ -172,6 +204,7 @@ class Tunnel:
                     self.sock = sock
                     with self.lock:
                         self.stage = 1
+                        self.lock.notify_all()
                     self.tunnel_handler()
 
                     logging.info('connection closed')
@@ -184,9 +217,11 @@ class Tunnel:
 
                 with self.lock:
                     self.stage = 2
+                    self.lock.notify_all()
 
-                logging.debug('waiting 4 seconds before retrying reconnection')
-                time.sleep(4.0)
+                if reverse:
+                    logging.debug('waiting 4 seconds before retrying reconnection')
+                    time.sleep(4.0)
 
         except KeyboardInterrupt:
             logging.info('please wait until the program stops...')
@@ -196,6 +231,7 @@ class Tunnel:
 
         with self.lock:
             self.stage = 0
+            self.lock.notify_all()
 
         if main_sock is not None:
             main_sock.close()
@@ -209,22 +245,32 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-p', '--port', type=int, default=8888,
-                        help='host port. default 8888')
-
-    parser.add_argument('-i', '--host', default='127.0.0.1',
-                        help='host address. default 127.0.0.1')
-
-    parser.add_argument('-r', '--reverse', action='store_true',
-                        help='use reverse connection')
-
-    parser.add_argument('-l', '--log', default='info',
-                        choices=['debug', 'info', 'warning', 'error', 'critical'])
+    parser.add_argument('-p', '--port', type=int, help='host port (default: 8888)')
+    parser.add_argument('-i', '--ip', help='host address. default 127.0.0.1')
+    parser.add_argument('-r', '--reverse', action='store_true', help='use reverse connection')
+    parser.add_argument('-l', '--log', choices=['debug', 'info', 'warning', 'error', 'critical'])
+    parser.add_argument('-c', '--config', default='', help='uses a configuration file')
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log.upper()),
+    # Default configuration
+    config = {'ip': '127.0.0.1', 'port': 1080, 'log': 'info', 'reverse': False}
+
+    # Config file configuration
+    if args.config:
+        config_file = configparser.ConfigParser(allow_no_value=True)
+        if config_file.read(args.config) and ('tcp' in config_file.sections()):
+            # Tunnel configuration
+            for key, value in config_file.items('tcp'):
+                config[key.lower()] = value if value is None else value.lower()
+
+    for option in ['ip', 'port', 'reverse', 'log']:
+        value = getattr(args, option)
+        config[option] = value if value else config[option]
+
+    # Starts program
+    logging.basicConfig(level=getattr(logging, config['log'].upper()),
                         format='[%(levelname)-0.1s][%(module)s] %(message)s')
 
-    tunnel = Tunnel(args.host, args.port)
-    tunnel.start(args.reverse)
+    tunnel = Tunnel(config['ip'], config['port'])
+    tunnel.start(config['reverse'])

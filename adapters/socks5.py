@@ -108,10 +108,15 @@ class Socks5:
             return
 
         while True:
-            data = yield from reader.read(8192)
-            logging.debug('[#{}] received data: {}'.format(cid, repr(data)))
+            try:
+                data = yield from reader.read(8192)
+            except ConnectionResetError:
+                break
+
             if not data:
                 break
+
+            logging.debug('[#{}] received data: {}'.format(cid, repr(data)))
 
             b64data = base64.b64encode(data).decode('ascii')
             message = {'cmd': 'sync', 'data': b64data, 'id': cid}

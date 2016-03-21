@@ -39,7 +39,6 @@ class HTTP:
         return self.messages.pop(0)
 
     def handler(self):
-
         session = requests.Session()
 
         with self.lock:
@@ -66,7 +65,6 @@ class HTTP:
             thread.join()
 
     def start(self, loop):
-
         session = requests.Session()
         with self.lock:
             session.get(self.url)
