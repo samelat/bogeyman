@@ -35,7 +35,7 @@ class Tunnel {
                     $sid = $message['id'];
                     $stream = new Stream($sid);
                     if (socket_set_nonblock($stream->sock)) {
-                        socket_connect($stream->sock, $message['host'], $message['port']));
+                        socket_connect($stream->sock, $message['host'], $message['port']);
                         $this->connecting_streams[$sid] = $stream;
                         $this->socket_to_sid[$stream->sock] = $sid;
                     } else {
@@ -74,13 +74,32 @@ class Tunnel {
             /* Controls pending connections and to read sockets */
             $active_socks = array_map(function($s){return $s->sock;}, $this->streams);
             $connecting_socks = array_map(function($s){return $s->sock;}, $this->connecting_streams);
-            socket_select($active_socks, $connecting_socks, null, 1);
+            $excepts = null;
+            socket_select($active_socks, $connecting_socks, $excepts, 1);
+
+            foreach($connecting_socks as &$sock) {
+                $sid = $this->socket_to_sid[$sock];
+                $error = socket_last_error($sock);
+
+                array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'status', 'value'=>$error));
+
+                if ($error == 0) {
+                    $this->streams[$sid] = $this->connecting_streams[$sid];
+                } else {
+                    socket_close($sock);
+                }
+
+                unset($this->connecting_streams[$sid]);
+            }
 
             foreach($active_socks as &$sock) {
                 $sid = $this->socket_to_sid[$sock];
                 $data = $this->streams[$sid]->recv();
                 if (count($data) == 0) {
                     array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'status', 'value'=>-2));
+                    socket_close($sock);
+                    unset($this->streams[$sid]);
+                    unset($this->socket_to_sid[$sock]);
                     continue;
                 }
                 $data = json_encode($data);
