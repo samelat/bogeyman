@@ -20,7 +20,7 @@ class Tunnel {
     public $socket_to_sid = array();
     public $connecting_streams = array();
 
-    public $running = False;
+    public $running = true;
     public $incoming = [];
     public $outgoing = [];
 
@@ -28,13 +28,14 @@ class Tunnel {
         
     }
 
-    public function digest_messages() {
-        foreach ($this->incoming as &$message) {
+    public function digest_incoming() {
+        foreach ($this->incoming as $message) {
             switch($message['cmd']) {
                 case 'connect':
                     $sid = $message['id'];
                     $stream = new Stream($sid);
-                    if (socket_set_nonblock($stream->sock)) {
+                    # if (socket_set_nonblock($stream->sock)) {
+                    if (true) {
                         socket_connect($stream->sock, $message['host'], $message['port']);
                         $this->connecting_streams[$sid] = $stream;
                         $this->socket_to_sid[$stream->sock] = $sid;
@@ -55,6 +56,7 @@ class Tunnel {
                     }
             }
         }
+        $this->incoming = array();
     }
 
     public function handler() {
@@ -63,6 +65,7 @@ class Tunnel {
 
             @session_start();
             $this->incoming = array_merge($this->incoming, $_SESSION['incoming']);
+            $_SESSION['incoming'] = array();
             $_SESSION['outgoing'] = array_merge($_SESSION['outgoing'], $this->outgoing);
             $this->outgoing = array();
             $this->running = $_SESSION['running'];
@@ -74,10 +77,14 @@ class Tunnel {
             /* Controls pending connections and to read sockets */
             $active_socks = array_map(function($s){return $s->sock;}, $this->streams);
             $connecting_socks = array_map(function($s){return $s->sock;}, $this->connecting_streams);
-            $excepts = null;
+            $excepts = NULL;
+            print_r($active_socks);
+            print_r($connecting_socks);
             socket_select($active_socks, $connecting_socks, $excepts, 1);
 
-            foreach($connecting_socks as &$sock) {
+            # break;
+
+            foreach($connecting_socks as $sock) {
                 $sid = $this->socket_to_sid[$sock];
                 $error = socket_last_error($sock);
 
@@ -92,7 +99,7 @@ class Tunnel {
                 unset($this->connecting_streams[$sid]);
             }
 
-            foreach($active_socks as &$sock) {
+            foreach($active_socks as $sock) {
                 $sid = $this->socket_to_sid[$sock];
                 $data = $this->streams[$sid]->recv();
                 if (count($data) == 0) {
@@ -115,19 +122,27 @@ $method = $_SERVER['REQUEST_METHOD'];
 if ($method == 'POST') {
 
     $request = json_decode(file_get_contents('php://input'), true);
-    $seq = $request['seq'];
-    $messages = $request['msgs'];
-    $command = $request['cmd'];
 
-    switch($command) {
+    switch($request['cmd']) {
         case 'start':
             if (!isset($_SESSION['running'])) {
-                $_SESSION['running'] = True;
+                $_SESSION['running'] = true;
                 $_SESSION['seq'] = 0;
                 $_SESSION['buffer'] = array();
                 $_SESSION['outgoing'] = [];
                 $_SESSION['incoming'] = [];
                 @session_commit();
+
+                set_time_limit(0);
+                ob_end_clean();
+                header("Connection: close");
+                ignore_user_abort();
+                ob_start();
+                $size = ob_get_length();
+                header("Content-Length: $size");
+                ob_end_flush();
+                flush();            
+                session_write_close();
 
                 $tunnel = new Tunnel();
                 $tunnel->handler();
@@ -135,20 +150,30 @@ if ($method == 'POST') {
             break;
 
         case 'sync':
+            $seq = $request['seq'];
+            $messages = $request['msgs'];
+
             if ($seq == $_SESSION['seq']) {
-                $_SESSION['outgoing'] = array_merge($_SESSION['outgoing'], $messages);
+                $_SESSION['incoming'] = array_merge($_SESSION['incoming'], $messages);
                 $_SESSION['seq']++;
 
                 while (array_key_exists($_SESSION['seq'], $_SESSION['buffer'])) {
-                    array_push($_SESSION['outgoing'], $_SESSION['buffer'][$_SESSION['seq']]);
-                    $_SESSION['outgoing'] = array_merge($_SESSION['outgoing'], $_SESSION['buffer'][$_SESSION['seq']]);
+                    $_SESSION['incoming'] = array_merge($_SESSION['incoming'], $_SESSION['buffer'][$_SESSION['seq']]);
                     unset($_SESSION['buffer'][$_SESSION['seq']]);
                     $_SESSION['seq']++;
                 }
 
-            } else {
+            } elseif ($seq > $_SESSION['seq']) {
                 $_SESSION['buffer'][$seq] = $messages;
+                
+            } else {
+                break;
             }
+
+            $response = array();
+
+            echo json_encode($response);
+
             break;
 
         case 'stop':

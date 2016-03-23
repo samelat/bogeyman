@@ -20,6 +20,7 @@ class HTTP:
         self.lock = Condition()
         self.messages = []
         self.cookies = None
+        self.sequence = 0
 
     def set_peer(self, peer):
         self.adapter = peer
