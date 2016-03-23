@@ -127,7 +127,8 @@ if ($method == 'POST') {
         case 'start':
             if (!isset($_SESSION['running'])) {
                 $_SESSION['running'] = true;
-                $_SESSION['seq'] = 0;
+                $_SESSION['i_seq'] = 0; # Incoming sequence number
+                $_SESSION['o_seq'] = 0; # Outgoing sequence number
                 $_SESSION['buffer'] = array();
                 $_SESSION['outgoing'] = [];
                 $_SESSION['incoming'] = [];
@@ -141,7 +142,7 @@ if ($method == 'POST') {
                 $size = ob_get_length();
                 header("Content-Length: $size");
                 ob_end_flush();
-                flush();            
+                flush();
                 session_write_close();
 
                 $tunnel = new Tunnel();
@@ -150,22 +151,22 @@ if ($method == 'POST') {
             break;
 
         case 'sync':
-            $seq = $request['seq'];
+            $seq = $request['i_seq'];
             $messages = $request['msgs'];
 
-            if ($seq == $_SESSION['seq']) {
+            if ($seq == $_SESSION['i_seq']) {
                 $_SESSION['incoming'] = array_merge($_SESSION['incoming'], $messages);
-                $_SESSION['seq']++;
+                $_SESSION['i_seq']++;
 
-                while (array_key_exists($_SESSION['seq'], $_SESSION['buffer'])) {
-                    $_SESSION['incoming'] = array_merge($_SESSION['incoming'], $_SESSION['buffer'][$_SESSION['seq']]);
-                    unset($_SESSION['buffer'][$_SESSION['seq']]);
-                    $_SESSION['seq']++;
+                while (array_key_exists($_SESSION['i_seq'], $_SESSION['buffer'])) {
+                    $_SESSION['incoming'] = array_merge($_SESSION['incoming'], $_SESSION['buffer'][$_SESSION['i_seq']]);
+                    unset($_SESSION['buffer'][$_SESSION['i_seq']]);
+                    $_SESSION['i_seq']++;
                 }
 
-            } elseif ($seq > $_SESSION['seq']) {
+            } elseif ($seq > $_SESSION['i_seq']) {
                 $_SESSION['buffer'][$seq] = $messages;
-                
+
             } else {
                 break;
             }
