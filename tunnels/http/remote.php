@@ -147,11 +147,12 @@ if ($method == 'POST') {
 
                 $tunnel = new Tunnel();
                 $tunnel->handler();
+                echo ":S";
             }
             break;
 
         case 'sync':
-            $seq = $request['i_seq'];
+            $seq = $request['seq'];
             $messages = $request['msgs'];
 
             if ($seq == $_SESSION['i_seq']) {
@@ -171,7 +172,11 @@ if ($method == 'POST') {
                 break;
             }
 
-            $response = array();
+            $msgs = array_slice($_SESSION['outgoing'], 0, 64);
+            $_SESSION['outgoing'] = array_slice($_SESSION['outgoing'], 64);
+
+            $response = array('seq'=>$_SESSION['o_seq'], 'cmd'=>'sync', 'msgs'=>$msgs);
+            $_SESSION['o_seq'] += 1;
 
             echo json_encode($response);
 
