@@ -11,7 +11,10 @@ class Stream {
     }
 
     public function send($data) {
-
+        while (count($data) > 0) {
+            socket_write($this->sock, $data);
+            $data = array();
+        }
     }
 }
 
@@ -104,8 +107,8 @@ class Tunnel {
 
             foreach($active_socks as $sock) {
                 $sid = $this->socket_to_sid[$sock];
-                $data = $this->streams[$sid]->recv();
-                if (count($data) == 0) {
+                $data = socket_read($this->streams[$sid]->sock, 8192);
+                if ($data == false) {
                     array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'status', 'value'=>-2));
                     socket_close($sock);
                     unset($this->streams[$sid]);
