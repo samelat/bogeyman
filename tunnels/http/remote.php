@@ -69,7 +69,10 @@ class Tunnel {
             $_SESSION['outgoing'] = array_merge($_SESSION['outgoing'], $this->outgoing);
             $this->outgoing = array();
             $this->running = $_SESSION['running'];
+            $_SESSION['control']++;
             @session_commit();
+
+            sleep(1);
 
             /* Process incoming messages */
             $this->digest_incoming();
@@ -132,6 +135,7 @@ if ($method == 'POST') {
                 $_SESSION['buffer'] = array();
                 $_SESSION['outgoing'] = [];
                 $_SESSION['incoming'] = [];
+                $_SESSION['control'] = 0;
                 @session_commit();
 
                 set_time_limit(0);
@@ -169,6 +173,7 @@ if ($method == 'POST') {
                 $_SESSION['buffer'][$seq] = $messages;
 
             } else {
+                echo '{"cmd":"error"}';
                 break;
             }
 
@@ -176,7 +181,7 @@ if ($method == 'POST') {
             $_SESSION['outgoing'] = array_slice($_SESSION['outgoing'], 64);
 
             $response = array('seq'=>$_SESSION['o_seq'], 'cmd'=>'sync', 'msgs'=>$msgs);
-            $_SESSION['o_seq'] += 1;
+            $_SESSION['o_seq']++;
 
             echo json_encode($response);
 
