@@ -139,14 +139,15 @@ class Socks5:
         logging.debug('executing message {}'.format(message))
         with (yield from self.lock):
             if message['cmd'] == 'status':
-                if message['value'] < 0:
-                    try:
-                        yield from self.streams[message['id']]['writer'].drain()
-                    except ConnectionResetError:
-                        pass
-                    self.streams[message['id']]['writer'].close()
-                self.streams[message['id']]['status'] = message['value']
-                self.lock.notify_all()
+                if message['id'] in self.streams:
+                    if message['value'] < 0:
+                        try:
+                            yield from self.streams[message['id']]['writer'].drain()
+                        except ConnectionResetError:
+                            pass
+                        self.streams[message['id']]['writer'].close()
+                    self.streams[message['id']]['status'] = message['value']
+                    self.lock.notify_all()
 
             elif message['cmd'] == 'disconnect':
                 if message['id'] in self.streams:

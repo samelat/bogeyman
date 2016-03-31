@@ -42,7 +42,15 @@ class Tunnel {
                     $stream = new Stream($sid);
                     # if (socket_set_nonblock($stream->sock)) {
                     if (true) {
-                        socket_connect($stream->sock, $message['addr'], $message['port']);
+
+                        $ip = filter_var(gethostbyname($message['addr']), FILTER_VALIDATE_IP);
+                        if ($ip == false) {
+                            $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
+                            array_push($this->outgoing, $msg);
+                            continue;
+                        }
+
+                        socket_connect($stream->sock, $ip, $message['port']);
                         $this->connecting_streams[$sid] = $stream;
                         $this->socket_to_sid[$stream->sock] = $sid;
                     } else {
