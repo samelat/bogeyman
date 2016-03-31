@@ -12,9 +12,12 @@ class Stream {
 
     public function send($data) {
         while (count($data) > 0) {
-            socket_write($this->sock, $data);
-            $data = array();
+            $result = socket_write($this->sock, $data);
+            if ($result == false)
+                return false;
+            $data = array_slice($data, $result);
         }
+        return true;
     }
 }
 
@@ -39,7 +42,7 @@ class Tunnel {
                     $stream = new Stream($sid);
                     # if (socket_set_nonblock($stream->sock)) {
                     if (true) {
-                        socket_connect($stream->sock, $message['host'], $message['port']);
+                        socket_connect($stream->sock, $message['addr'], $message['port']);
                         $this->connecting_streams[$sid] = $stream;
                         $this->socket_to_sid[$stream->sock] = $sid;
                     } else {
@@ -51,7 +54,7 @@ class Tunnel {
                 case 'sync':
                     $sid = $message['id'];
                     if (array_key_exists($sid, $this->streams)) {
-                        $data = json_decode($message['data']);
+                        $data = base64_decode($message['data']);
                         if (!$this->streams[$sid]->send($data)) {
                             $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
                             array_push($this->outgoing, $msg);
@@ -84,8 +87,7 @@ class Tunnel {
             $active_socks = array_map(function($s){return $s->sock;}, $this->streams);
             $connecting_socks = array_map(function($s){return $s->sock;}, $this->connecting_streams);
             $excepts = NULL;
-            print_r($active_socks);
-            print_r($connecting_socks);
+            
             socket_select($active_socks, $connecting_socks, $excepts, 1);
 
             # break;
@@ -115,7 +117,7 @@ class Tunnel {
                     unset($this->socket_to_sid[$sock]);
                     continue;
                 }
-                $data = json_encode($data);
+                $data = base64_encode($data);
                 array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'sync', 'data'=>$data));
             }
         }
@@ -139,7 +141,7 @@ if ($method == 'POST') {
                 $_SESSION['outgoing'] = [];
                 $_SESSION['incoming'] = [];
                 $_SESSION['control'] = 0;
-                @session_commit();
+                session_commit();
 
                 set_time_limit(0);
                 ob_end_clean();
@@ -150,11 +152,9 @@ if ($method == 'POST') {
                 header("Content-Length: $size");
                 ob_end_flush();
                 flush();
-                session_write_close();
 
                 $tunnel = new Tunnel();
                 $tunnel->handler();
-                echo ":S";
             }
             break;
 
