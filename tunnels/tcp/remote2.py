@@ -254,7 +254,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Default configuration
-    config = {'ip': '127.0.0.1', 'port': 1080, 'log': 'info', 'reverse': False}
+    config = {'ip': '127.0.0.1', 'port': 8888, 'log': 'info', 'reverse': False}
 
     # Config file configuration
     if args.config:
