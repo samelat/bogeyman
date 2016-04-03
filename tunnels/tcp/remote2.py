@@ -8,6 +8,7 @@ import select
 import struct
 import logging
 import argparse
+import traceback
 import ConfigParser as configparser
 
 from threading import Thread, Condition
@@ -226,8 +227,8 @@ class Tunnel:
         except KeyboardInterrupt:
             logging.info('please wait until the program stops...')
 
-        except Exception as e:
-            logging.error('tunnel exception: {}'.format(e))
+        except:
+            logging.critical('tunnel exception: \n{}'.format(traceback.format_exc()))
 
         with self.lock:
             self.stage = 0
