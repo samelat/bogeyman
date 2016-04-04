@@ -40,7 +40,7 @@ class Tunnel {
                 case 'connect':
                     $sid = $message['id'];
                     $stream = new Stream($sid);
-                    # if (socket_set_nonblock($stream->sock)) {
+                    #if (socket_set_nonblock($stream->sock)) {
                     if (true) {
 
                         $ip = filter_var(gethostbyname($message['addr']), FILTER_VALIDATE_IP);
@@ -53,6 +53,7 @@ class Tunnel {
                         socket_connect($stream->sock, $ip, $message['port']);
                         $this->connecting_streams[$sid] = $stream;
                         $this->socket_to_sid[$stream->sock] = $sid;
+
                     } else {
                         $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
                         array_push($this->outgoing, $msg);
@@ -86,8 +87,6 @@ class Tunnel {
             $_SESSION['control']++;
             @session_commit();
 
-            sleep(1);
-
             /* Process incoming messages */
             $this->digest_incoming();
 
@@ -96,9 +95,12 @@ class Tunnel {
             $connecting_socks = array_map(function($s){return $s->sock;}, $this->connecting_streams);
             $excepts = NULL;
             
-            socket_select($active_socks, $connecting_socks, $excepts, 1);
+            if (empty($active_socks) && empty($connecting_socks)) {
+                sleep(1);
+                continue;
+            }
 
-            # break;
+            socket_select($active_socks, $connecting_socks, $excepts, 1);
 
             foreach($connecting_socks as $sock) {
                 $sid = $this->socket_to_sid[$sock];
