@@ -11,11 +11,11 @@ class Stream {
     }
 
     public function send($data) {
-        while (count($data) > 0) {
+        while ($data and (count($data) > 0)) {
             $result = socket_write($this->sock, $data);
             if ($result == false)
                 return false;
-            $data = array_slice($data, $result);
+            $data = substr($data, $result);
         }
         return true;
     }
@@ -40,24 +40,18 @@ class Tunnel {
                 case 'connect':
                     $sid = $message['id'];
                     $stream = new Stream($sid);
-                    #if (socket_set_nonblock($stream->sock)) {
-                    if (true) {
 
-                        $ip = filter_var(gethostbyname($message['addr']), FILTER_VALIDATE_IP);
-                        if ($ip == false) {
-                            $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
-                            array_push($this->outgoing, $msg);
-                            continue;
-                        }
-
-                        socket_connect($stream->sock, $ip, $message['port']);
-                        $this->connecting_streams[$sid] = $stream;
-                        $this->socket_to_sid[$stream->sock] = $sid;
-
-                    } else {
-                        $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
+                    $ip = filter_var(gethostbyname($message['addr']), FILTER_VALIDATE_IP);
+                    if ($ip == false) {
+                        $msg = array('id'=>$sid, 'cmd'=>'status', 'value'=>5);
                         array_push($this->outgoing, $msg);
+                        continue;
                     }
+
+                    socket_connect($stream->sock, $ip, $message['port']);
+                    $this->connecting_streams[$sid] = $stream;
+                    $this->socket_to_sid[$stream->sock] = $sid;
+
                     break;
 
                 case 'sync':
@@ -65,7 +59,7 @@ class Tunnel {
                     if (array_key_exists($sid, $this->streams)) {
                         $data = base64_decode($message['data']);
                         if (!$this->streams[$sid]->send($data)) {
-                            $msg = array('id'=>$this->sid, 'cmd'=>'status', 'value'=>-2);
+                            $msg = array('id'=>$sid, 'cmd'=>'status', 'value'=>5);
                             array_push($this->outgoing, $msg);
                         }
                     }
@@ -79,6 +73,8 @@ class Tunnel {
         while ($this->running) {
 
             @session_start();
+            if(!isset($_SESSION['running']))
+                break;
             $this->incoming = array_merge($this->incoming, $_SESSION['incoming']);
             $_SESSION['incoming'] = array();
             $_SESSION['outgoing'] = array_merge($_SESSION['outgoing'], $this->outgoing);
@@ -121,7 +117,7 @@ class Tunnel {
                 $sid = $this->socket_to_sid[$sock];
                 $data = socket_read($this->streams[$sid]->sock, 8192);
                 if ($data == false) {
-                    array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'status', 'value'=>-2));
+                    array_push($this->outgoing, array('id'=>$sid, 'cmd'=>'status', 'value'=>5));
                     socket_close($sock);
                     unset($this->streams[$sid]);
                     unset($this->socket_to_sid[$sock]);

@@ -81,3 +81,8 @@ if __name__ == '__main__':
         loop.run_forever()
     except KeyboardInterrupt:
         pass
+
+    adapter.stop()
+    tunnel.stop()
+
+    loop.stop()

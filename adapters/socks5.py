@@ -18,6 +18,7 @@ class Socks5:
         self.loop = None
         self.lock = asyncio.Condition()
         self.streams = {}
+        self.running = False
 
     def set_peer(self, peer):
         self.tunnel = peer
@@ -56,28 +57,34 @@ class Socks5:
         # +----+-----+-------+------+
         # |VER | CMD |  RSV  | ATYP |
         # +----+-----+-------+------+
-        data = yield from reader.readexactly(4)
-        _, command, _, address_type = struct.unpack('BBBB', data)
-        if address_type not in [1, 3]:
-            logging.debug('[#{}] address type not supported'.format(cid))
-            # +----+-----+-----+------+----------+----------+
-            # |VER | REP | RSV | ATYP | BND.ADDR | BND.PORT |
-            # +----+-----+-----+------+----------+----------+
-            writer.write(struct.pack('>BBBBIH', version, 8, 0, 1, 0, 0))
+        try:
+            data = yield from reader.readexactly(4)
+            _, command, _, address_type = struct.unpack('BBBB', data)
+            if address_type not in [1, 3]:
+                logging.debug('[#{}] address type not supported'.format(cid))
+                # +----+-----+-----+------+----------+----------+
+                # |VER | REP | RSV | ATYP | BND.ADDR | BND.PORT |
+                # +----+-----+-----+------+----------+----------+
+                writer.write(struct.pack('>BBBBIH', version, 8, 0, 1, 0, 0))
+                writer.close()
+                return
+
+            if address_type is 1:
+                data = yield from reader.readexactly(6)
+                address = socket.inet_ntoa(data[:4])
+                port = struct.unpack('>H', data[4:])[0]
+
+            elif address_type is 3:
+                data = yield from reader.readexactly(1)
+                domain_size = struct.unpack('B', data)[0]
+                data = yield from reader.readexactly(domain_size + 2)
+                address = data[:domain_size].decode('ascii')
+                port = struct.unpack('>H', data[domain_size:])[0]
+
+        except asyncio.IncompleteReadError:
+            logging.error('error reading socks5 headers')
             writer.close()
             return
-
-        if address_type is 1:
-            data = yield from reader.readexactly(6)
-            address = socket.inet_ntoa(data[:4])
-            port = struct.unpack('>H', data[4:])[0]
-
-        elif address_type is 3:
-            data = yield from reader.readexactly(1)
-            domain_size = struct.unpack('B', data)[0]
-            data = yield from reader.readexactly(domain_size + 2)
-            address = data[:domain_size].decode('ascii')
-            port = struct.unpack('>H', data[domain_size:])[0]
 
         # We will implement ipv6 when we need it :P.
 
@@ -163,11 +170,11 @@ class Socks5:
                     self.streams[message['id']]['writer'].write(data)
 
             elif message['cmd'] == 'stop':
-                self.server.close()
-                try:
-                    yield from asyncio.wait_for(self.server.wait_closed(), 2.0, loop=self.loop)
-                except asyncio.TimeoutError:
-                    pass
+                #self.server.close()
+                #try:
+                #    yield from asyncio.wait_for(self.server.wait_closed(), 2.0, loop=self.loop)
+                #except asyncio.TimeoutError:
+                #    pass
                 self.loop.stop()
 
     def dispatch(self, message):
@@ -176,11 +183,14 @@ class Socks5:
         self.loop.call_soon_threadsafe(async_execute, message)
 
     def stop(self):
-        self.server.close()
-        self.loop.run_until_complete(self.server.wait_closed())
+        if self.running:
+            self.server.close()
+            self.loop.run_until_complete(self.server.wait_closed())
+            self.running = False
 
     def start(self, loop):
         self.loop = loop
+        self.running = True
         handler = asyncio.start_server(self.new_connection, self.address, self.port, loop=loop)
         self.server = loop.run_until_complete(handler)
         logging.info('listening on {}:{}'.format(self.address, self.port))

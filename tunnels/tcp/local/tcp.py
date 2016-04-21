@@ -1,6 +1,7 @@
 
 import sys
 import json
+import time
 import struct
 import asyncio
 import logging
@@ -17,6 +18,7 @@ class TCP(asyncio.Protocol):
         self.adapter = None
         self.loop = None
         self.writer = None
+        self.running = False
 
     def set_peer(self, peer):
         self.adapter = peer
@@ -34,7 +36,7 @@ class TCP(asyncio.Protocol):
         logging.info('connection ready')
 
         self.writer = writer
-        while True:
+        while self.running:
             try:
                 data = yield from reader.readexactly(2)
                 size = struct.unpack('>H', data)[0]
@@ -55,7 +57,7 @@ class TCP(asyncio.Protocol):
     # Keeps connecting with the other tunnel extreme.
     @asyncio.coroutine
     def connect(self):
-        while True:
+        while self.running:
             logging.info('connecting to {}:{}'.format(self.host, self.port))
             try:
                 connect_coro = asyncio.open_connection(self.host, self.port, loop=self.loop)
@@ -67,27 +69,35 @@ class TCP(asyncio.Protocol):
 
             except ConnectionRefusedError:
                 logging.info('connection refused')
-                yield from asyncio.sleep(4.0)
+                end_time = time.time() + 8.0
+                while self.running and (end_time > time.time()):
+                    yield from asyncio.sleep(0.5)
 
             except Exception as e:
                 logging.error('unknown tunnel exception: {}'.format(e))
-                yield from self.stop()
-                break
+                self.loop.stop()
+                self.running = False
+                # yield from self.stop()
+                # break
 
     @asyncio.coroutine
-    def stop(self):
+    def wait(self):
+        self.running = False
         if self.reverse:
             self.tunnel.close()
-            sys.stdout.flush()
             try:
                 yield from asyncio.wait_for(self.tunnel.wait_closed(), 2.0, loop=self.loop)
             except asyncio.TimeoutError:
                 pass
+        else:
+            yield from asyncio.wait_for(self.tunnel, 2.0, loop=self.loop)
 
-        self.adapter.dispatch({'cmd': 'stop'})
+    def stop(self):
+        self.loop.run_until_complete(self.wait())
 
     def start(self, loop):
         self.loop = loop
+        self.running = True
 
         if self.reverse:
             server_coroutine = asyncio.start_server(self.handler, self.host, self.port, loop=loop)
