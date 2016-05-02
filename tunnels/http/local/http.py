@@ -11,9 +11,9 @@ from threading import Thread, Condition
 
 class HTTP:
 
-    def __init__(self, params):
-        self.url = params.get('url', 'http://127.0.0.1/remote.php')
-        self.number_of_threads = int(params.get('threads', 1))
+    def __init__(self, url, threads=1):
+        self.url = url
+        self.number_of_threads = threads
         self.loop = None
 
         # Stage 2: Trying to reconnect tunnel

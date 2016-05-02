@@ -5,6 +5,7 @@ import random
 import socket
 import asyncio
 import logging
+import traceback
 
 
 class Socks5:
@@ -115,11 +116,7 @@ class Socks5:
             return
 
         while True:
-            try:
-                data = yield from reader.read(8192)
-            except ConnectionResetError:
-                break
-
+            data = yield from reader.read(8192)
             if not data:
                 break
 
@@ -128,6 +125,7 @@ class Socks5:
             b64data = base64.b64encode(data).decode('ascii')
             message = {'cmd': 'sync', 'data': b64data, 'id': cid}
             while self.tunnel.dispatch(message):
+                # If the dispatch fails, we have to wait before retry.
                 yield from asyncio.sleep(1.0)
 
         logging.debug('Closing connection #{}'.format(cid))
@@ -136,9 +134,12 @@ class Socks5:
             if self.streams[cid]['status'] == 0:
                 try:
                     yield from writer.drain()
+                    writer.close()
                 except ConnectionResetError:
                     pass
-                writer.close()
+                except RuntimeError:
+                    logging.critical('tunnel exception: \n{}'.format(traceback.format_exc()))
+
             del(self.streams[cid])
 
     @asyncio.coroutine
@@ -170,11 +171,6 @@ class Socks5:
                     self.streams[message['id']]['writer'].write(data)
 
             elif message['cmd'] == 'stop':
-                #self.server.close()
-                #try:
-                #    yield from asyncio.wait_for(self.server.wait_closed(), 2.0, loop=self.loop)
-                #except asyncio.TimeoutError:
-                #    pass
                 self.loop.stop()
 
     def dispatch(self, message):
@@ -184,9 +180,12 @@ class Socks5:
 
     def stop(self):
         if self.running:
+            self.running = False
+            for stream in self.streams.values():
+                stream['status'] = -2
+                stream['writer'].close()
             self.server.close()
             self.loop.run_until_complete(self.server.wait_closed())
-            self.running = False
 
     def start(self, loop):
         self.loop = loop

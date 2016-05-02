@@ -1,5 +1,4 @@
 
-import sys
 import json
 import time
 import struct
@@ -9,10 +8,10 @@ import logging
 
 class TCP(asyncio.Protocol):
 
-    def __init__(self, params):
-        self.host = params.get('ip', '127.0.0.1')
-        self.port = int(params.get('port', 8888))
-        self.reverse = 'reverse' in params
+    def __init__(self, tunnel_ip, tunnel_port, reverse=False):
+        self.host = tunnel_ip
+        self.port = tunnel_port
+        self.reverse = reverse
 
         self.tunnel = None
         self.adapter = None
@@ -47,12 +46,16 @@ class TCP(asyncio.Protocol):
                 logging.info('disconnected')
                 break
 
+            except asyncio.CancelledError:
+                self.writer.close()
+                break
+
             message = json.loads(data.decode('ascii'))
 
             logging.debug('incoming message {}'.format(message))
             self.adapter.dispatch(message)
 
-        logging.info('connection lost')
+        logging.info('connection closed')
 
     # Keeps connecting with the other tunnel extreme.
     @asyncio.coroutine
@@ -73,24 +76,21 @@ class TCP(asyncio.Protocol):
                 while self.running and (end_time > time.time()):
                     yield from asyncio.sleep(0.5)
 
-            except Exception as e:
-                logging.error('unknown tunnel exception: {}'.format(e))
-                self.loop.stop()
+            except asyncio.CancelledError:
                 self.running = False
-                # yield from self.stop()
-                # break
 
     @asyncio.coroutine
     def wait(self):
         self.running = False
-        if self.reverse:
-            self.tunnel.close()
-            try:
+        try:
+            if self.reverse:
+                self.tunnel.close()
                 yield from asyncio.wait_for(self.tunnel.wait_closed(), 2.0, loop=self.loop)
-            except asyncio.TimeoutError:
-                pass
-        else:
-            yield from asyncio.wait_for(self.tunnel, 2.0, loop=self.loop)
+            else:
+                self.tunnel.cancel()
+                yield from asyncio.wait_for(self.tunnel, 2.0, loop=self.loop)
+        except asyncio.TimeoutError:
+            pass
 
     def stop(self):
         self.loop.run_until_complete(self.wait())
