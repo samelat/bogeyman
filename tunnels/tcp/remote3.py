@@ -6,6 +6,7 @@ import base64
 import asyncio
 import logging
 import argparse
+import traceback
 import configparser
 
 
@@ -13,11 +14,14 @@ class Stream(asyncio.Protocol):
     def __init__(self, sid, tunnel):
         self.sid = sid
         self.tunnel = tunnel
+        self.logger = tunnel.logger
         self.transport = None
+        self.task = None
 
     def connection_made(self, transport):
-        logging.info('Stream #{} connected'.format(self.sid))
+        self.logger.info('Stream #{} connected'.format(self.sid))
         self.transport = transport
+        self.task = None
 
     def data_received(self, data):
         remaining = data
@@ -27,101 +31,174 @@ class Stream(asyncio.Protocol):
             self.tunnel.dispatch({'cmd': 'sync', 'data': b64data, 'id': self.sid})
 
     def connection_lost(self, exc):
-        logging.info('Closing stream connection #{}'.format(self.sid))
-        self.tunnel.dispatch({'cmd': 'disconnect', 'id': self.sid})
+        self.logger.info('Closing stream connection #{}'.format(self.sid))
+        # self.tunnel.dispatch({'cmd': 'disconnect', 'id': self.sid})
 
     @asyncio.coroutine
     def connect(self, address, port):
         try:
-            logging.info('Stream #{} trying to connect to {}:{}'.format(self.sid, address, port))
+            self.logger.info('Stream #{} trying to connect to {}:{}'.format(self.sid, address, port))
             yield from self.tunnel.loop.create_connection(lambda: self, address, port)
             status = 0
 
         except TimeoutError:
-            logging.debug('Connection timeout')
+            self.logger.debug('Connection timeout')
             status = 6
         except ConnectionRefusedError:
-            logging.debug('Connection refused')
+            self.logger.debug('Connection refused')
             status = 5
-        except Exception as e:
-            logging.debug('Unknown connection error: {}'.format(e))
+        except asyncio.CancelledError:
+            return
+        except GeneratorExit:
+            return
+        except KeyboardInterrupt:
+            self.tunnel.loop.stop()
+            return
+        except BaseException:
+            self.logger.critical('unknown connection error: \n{}'.format(traceback.format_exc()))
             status = 4
 
-        if status == 0:
-            self.tunnel.streams[self.sid] = self
         self.tunnel.dispatch({'cmd': 'status', 'value': status, 'id': self.sid})
+
+        if status != 0:
+            del self.tunnel.streams[self.sid]
 
 
 class Tunnel:
 
-    def __init__(self, host, port):
+    def __init__(self, host, port, logger):
         self.host = host
         self.port = port
+        self.logger = logger
         self.loop = None
+        self.tunnel = None
         self.writer = None
         self.streams = {}
+        self.running = False
+        self.pending_tasks = []
 
     # Send message back to the other tunnel extreme.
     def dispatch(self, message):
+        if not self.running:
+            return
         data = json.dumps(message).encode()
+        self.logger.debug('outgoing message: {}'.format(message))
         self.writer.write(struct.pack('>H', len(data)) + data)
 
     @asyncio.coroutine
     def handler(self, reader, writer):
         self.writer = writer
+        self.logger.info('connection ready')
         # Handles each incoming message
-        while True:
-            data = yield from reader.readexactly(2)
-            size = struct.unpack('>H', data)[0]
-            data = yield from reader.readexactly(size)
-            message = json.loads(data.decode('ascii'))
-            logging.debug('new message {}'.format(message))
 
-            if message['cmd'] == 'connect':
-                stream = Stream(message['id'], self)
-                asyncio.async(stream.connect(message['addr'], message['port']), loop=self.loop)
+        while self.running:
+            try:
+                data = yield from reader.readexactly(2)
+                size = struct.unpack('>H', data)[0]
+                data = yield from reader.readexactly(size)
+                message = json.loads(data.decode('ascii'))
+                self.logger.debug('incoming message: {}'.format(message))
 
-            elif message['cmd'] == 'sync':
-                data = base64.b64decode(message['data'].encode('ascii'))
-                self.streams[message['id']].transport.write(data)
+                if message['cmd'] == 'connect':
+                    stream = Stream(message['id'], self)
+                    self.streams[stream.sid] = stream
+                    stream.task = asyncio.async(stream.connect(message['addr'], message['port']), loop=self.loop)
+                    # task = asyncio.async(stream.connect(message['addr'], message['port']), loop=self.loop)
+                    # self.pending_tasks.append(task)
+
+                elif message['cmd'] == 'sync':
+                    if message['id'] not in self.streams:
+                        self.dispatch({'cmd': 'status', 'value': 5, 'id': message['id']})
+                        continue
+                    data = base64.b64decode(message['data'].encode('ascii'))
+                    self.streams[message['id']].transport.write(data)
+
+                # self.pending_tasks = [task for task in self.pending_tasks if not task.done()]
+
+            except asyncio.IncompleteReadError:
+                self.logger.debug('tunnel connection lost')
+                return
+
+            except KeyboardInterrupt:
+                self.loop.stop()
+                return
 
     # Keeps connecting with the other tunnel extreme.
     @asyncio.coroutine
     def connect(self):
-        while True:
-            logging.info('connecting to {}:{}'.format(self.host, self.port))
+        while self.running:
+            self.logger.info('connecting to {}:{}'.format(self.host, self.port))
             try:
                 connect_coro = asyncio.open_connection(self.host, self.port, loop=self.loop)
                 reader, writer = yield from asyncio.wait_for(connect_coro, 8.0)
                 yield from self.handler(reader, writer)
 
             except asyncio.TimeoutError:
-                logging.info('connection timeout')
+                self.logger.info('connection timeout')
 
             except ConnectionRefusedError:
-                logging.info('connection refused')
+                self.logger.info('connection refused')
                 yield from asyncio.sleep(8.0)
 
-            except Exception as e:
-                logging.error('unknown tunnel exception: {}'.format(e))
+            except KeyboardInterrupt:
+                self.loop.stop()
+                self.logger.debug('execution aborted')
                 break
+
+            except asyncio.CancelledError:
+                break
+
+            except:
+                self.logger.error('unknown tunnel exception: \n{}'.format(traceback.format_exc()))
+                break
+
+    @asyncio.coroutine
+    def stop_and_wait(self):
+        # First we have to stop the tunnel connection.
+        self.running = False
+        try:
+            self.writer.close()
+            if True:
+                self.tunnel.cancel()
+                yield from self.tunnel
+            else:
+                self.tunnel.close()
+                yield from asyncio.wait_for(self.tunnel.wait_closed(), 2.0, loop=self.loop)
+        except:
+            pass
+
+        # Then, we start stopping the streams
+        for stream in self.streams.values():
+            try:
+                if stream.task is None:
+                    stream.transport.close()
+                else:
+                    stream.task.cancel()
+                    yield from stream.task
+            except:
+                pass
 
     def start(self, reverse):
         self.loop = asyncio.get_event_loop()
 
         try:
+            self.running = True
             if reverse:
-                self.loop.run_until_complete(self.connect())
+                # self.loop.run_until_complete(self.connect())
+                self.tunnel = asyncio.async(self.connect(), loop=self.loop)
 
             else:
                 server_coroutine = asyncio.start_server(self.handler, self.host, self.port, loop=self.loop)
-                self.loop.run_until_complete(server_coroutine)
-                logging.info('listening on {}:{}'.format(self.host, self.port))
-                self.loop.run_forever()
-        except KeyboardInterrupt:
-            pass
+                self.tunnel = self.loop.run_until_complete(server_coroutine)
+                self.logger.info('listening on {}:{}'.format(self.host, self.port))
 
-        logging.debug('closing loop')
+            self.loop.run_forever()
+        except KeyboardInterrupt:
+            self.logger.info('stopping tunnel')
+
+        self.loop.run_until_complete(self.stop_and_wait())
+
+        self.logger.debug('closing loop')
         self.loop.close()
 
 if __name__ == "__main__":
@@ -137,7 +214,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Default configuration
-    config = {'ip': '127.0.0.1', 'port': 1080, 'log': 'info', 'reverse': False}
+    config = {'ip': '127.0.0.1', 'port': 8888, 'log': 'info', 'reverse': False}
 
     # Config file configuration
     if args.config:
@@ -152,8 +229,9 @@ if __name__ == "__main__":
         config[option] = value if value else config[option]
 
     # Starts program
-    logging.basicConfig(level=getattr(logging, config['log'].upper()),
-                        format='[%(levelname)-0.1s][%(module)s] %(message)s')
+    logging.basicConfig(format='[%(levelname)-0.1s][%(module)s] %(message)s')
+    logger = logging.getLogger('remote3')
+    logger.setLevel(getattr(logging, config['log'].upper()))
 
-    tunnel = Tunnel(args.host, args.port)
+    tunnel = Tunnel(config['ip'], config['port'], logger)
     tunnel.start(args.reverse)

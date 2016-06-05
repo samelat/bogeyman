@@ -6,13 +6,15 @@ import asyncio
 import logging
 
 
-class TCP(asyncio.Protocol):
+class TCP:
 
     def __init__(self, tunnel_ip, tunnel_port, reverse=False):
+        self.logger = logging.getLogger('bogeyman')
         self.host = tunnel_ip
         self.port = tunnel_port
         self.reverse = reverse
 
+        self.task = None
         self.tunnel = None
         self.adapter = None
         self.loop = None
@@ -24,15 +26,16 @@ class TCP(asyncio.Protocol):
 
     def dispatch(self, message):
         if self.writer is None:
-            return True
-        logging.debug('receive message {}'.format(message))
+            return False
+        self.logger.debug('receive message {}'.format(message))
         data = json.dumps(message).encode()
         self.writer.write(struct.pack('>H', len(data)) + data)
-        return False
+        return True
 
     @asyncio.coroutine
     def handler(self, reader, writer):
-        logging.info('connection ready')
+        self.logger.info('connection ready')
+        self.task = asyncio.Task.current_task(loop=self.loop)
 
         self.writer = writer
         while self.running:
@@ -43,35 +46,42 @@ class TCP(asyncio.Protocol):
 
             except asyncio.streams.IncompleteReadError:
                 self.writer = None
-                logging.info('disconnected')
+                self.logger.info('disconnected')
                 break
 
             except asyncio.CancelledError:
-                self.writer.close()
+                break
+
+            except KeyboardInterrupt:
+                self.loop.stop()
                 break
 
             message = json.loads(data.decode('ascii'))
 
-            logging.debug('incoming message {}'.format(message))
+            self.logger.debug('incoming message {}'.format(message))
             self.adapter.dispatch(message)
 
-        logging.info('connection closed')
+        try:
+            self.writer.close()
+        except:
+            pass
+        self.logger.info('connection closed')
 
     # Keeps connecting with the other tunnel extreme.
     @asyncio.coroutine
     def connect(self):
         while self.running:
-            logging.info('connecting to {}:{}'.format(self.host, self.port))
+            self.logger.info('connecting to {}:{}'.format(self.host, self.port))
             try:
                 connect_coro = asyncio.open_connection(self.host, self.port, loop=self.loop)
                 reader, writer = yield from asyncio.wait_for(connect_coro, 8.0)
                 yield from self.handler(reader, writer)
 
             except asyncio.TimeoutError:
-                logging.info('connection timeout')
+                self.logger.info('connection timeout')
 
             except ConnectionRefusedError:
-                logging.info('connection refused')
+                self.logger.info('connection refused')
                 end_time = time.time() + 8.0
                 while self.running and (end_time > time.time()):
                     yield from asyncio.sleep(0.5)
@@ -90,7 +100,18 @@ class TCP(asyncio.Protocol):
                 self.tunnel.cancel()
                 yield from asyncio.wait_for(self.tunnel, 2.0, loop=self.loop)
         except asyncio.TimeoutError:
-            pass
+            self.logger.debug('timeout')
+        except asyncio.CancelledError:
+            self.logger.debug('cancelled')
+        except:
+            self.logger.debug('unknown exception')
+
+        self.task.cancel()
+        yield from self.task
+
+        #if self.task is not None:
+        #    print('ESPERANDO TASK QUE ESTA A MEDIAS')
+        #    yield from self.task
 
     def stop(self):
         self.loop.run_until_complete(self.wait())
@@ -102,7 +123,7 @@ class TCP(asyncio.Protocol):
         if self.reverse:
             server_coroutine = asyncio.start_server(self.handler, self.host, self.port, loop=loop)
             self.tunnel = loop.run_until_complete(server_coroutine)
-            logging.info('listening on {}:{}'.format(self.host, self.port))
+            self.logger.info('listening on {}:{}'.format(self.host, self.port))
 
         else:
             self.tunnel = asyncio.async(self.connect(), loop=loop)

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import time
+import sys
 import asyncio
 import logging
 import argparse
@@ -41,8 +41,6 @@ if __name__ == '__main__':
     config = {'adapter_ip': '127.0.0.1', 'adapter_port': 1080, 'adapter': 'socks5', 'log': 'info', 'tunnel': 'tcp'}
     file_params = {}
 
-    print(args)
-
     # Config file configuration
     if args.config is not None:
         config_file = configparser.ConfigParser(allow_no_value=True)
@@ -66,19 +64,20 @@ if __name__ == '__main__':
     if config['tunnel'] == 'tcp':
         params = {'tunnel_ip': '127.0.0.1', 'tunnel_port': 8888}
         params.update(file_params)
-        params['tunnel_ip'] = args.tunnel_ip if args.tunnel_ip is not None else params['tunnel_ip']
-        params['tunnel_port'] = args.tunnel_port if args.tunnel_port is not None else params['tunnel_port']
-        params['reverse'] = args.reverse
+        params['tunnel_ip'] = getattr(args, 'tunnel_ip', False) or params['tunnel_ip']
+        params['tunnel_port'] = getattr(args, 'tunnel_port', False) or params['tunnel_port']
+        params['reverse'] = getattr(args, 'reverse', False)
 
     elif config['tunnel'] == 'http':
         params = {'url': 'http://127.0.0.1/remote.php', 'threads': 2}
         params.update(file_params)
-        params['url'] = args.url if args.url is not None else params['url']
-        params['threads'] = args.threads if args.threads is not None else params['threads']
+        params['url'] = getattr(args, 'url', False) or params['url']
+        params['threads'] = getattr(args, 'threads', False) or params['threads']
 
     # Starts program
-    logging.basicConfig(level=getattr(logging, config['log'].upper()),
-                        format='[%(levelname)-0.1s][%(module)s] %(message)s')
+    logging.basicConfig(format='[%(levelname)-0.1s][%(module)s] %(message)s')
+    logger = logging.getLogger('bogeyman')
+    logger.setLevel(getattr(logging, config['log'].upper()))
 
     # Configure tunnel
     tunnel_class = getattr(tunnels, config['tunnel'].upper())
@@ -97,12 +96,18 @@ if __name__ == '__main__':
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        logging.info('stopping server')
+        logger.info('stopping server')
     except Exception:
-        logging.critical('unknown exception: \n{}'.format(traceback.format_exc()))
+        logger.critical('unknown exception: \n{}'.format(traceback.format_exc()))
 
-    adapter.stop()
-    tunnel.stop()
+    sys.stdout.flush()
 
-    if not loop.is_closed():
-        loop.stop()
+    try:
+        if not loop.is_closed():
+            adapter.stop()
+            tunnel.stop()
+            loop.stop()
+
+        logging.basicConfig(level=logging.CRITICAL)
+    except KeyboardInterrupt:
+        pass
